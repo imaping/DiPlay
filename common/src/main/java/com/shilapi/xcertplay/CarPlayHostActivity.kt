@@ -5769,12 +5769,7 @@ open class CarPlayHostActivity : ComponentActivity() {
                 !config.locationReportingEnabled -> null
                 config.identification.vehicleSpeedEnabled &&
                     !com.shilapi.xcertplay.hud.BydOutputSettings.wheelSpeedToIphoneActive(this) ->
-                    // ECARX: the head unit has no GPS of its own, so only the wheel speed goes to the iPhone.
-                    VehicleSpeedLocationProvider(
-                        EcarxWheelSpeed.NoPosition,
-                        EcarxWheelSpeed.attach(applicationContext),
-                        log = ::appendLog,
-                    )
+                    EcarxLocationEnhancer.create(this, ::appendLog)
                 config.identification.vehicleSpeedEnabled -> VehicleSpeedLocationProvider(
                     AndroidCarPlayLocationProvider(this),
                     com.shilapi.xcertplay.hud.BydNavigationOutputs.wheelSpeed(applicationContext),
