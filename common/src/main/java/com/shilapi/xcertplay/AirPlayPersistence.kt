@@ -265,7 +265,7 @@ object AirPlayPersistence {
 
     fun loadAudioFocusEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_AUDIO_FOCUS_ENABLED, false)
+            .getBoolean(KEY_AUDIO_FOCUS_ENABLED, EcarxKx11HeadUnit.detected)
 
     fun saveAudioFocusEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -286,7 +286,7 @@ object AirPlayPersistence {
     /** Opt-in (#946, #545): each navigation prompt requests duckable focus. Applies only while audio focus is on. */
     fun loadNavigationPromptAudioFocus(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_NAVIGATION_PROMPT_AUDIO_FOCUS, false)
+            .getBoolean(KEY_NAVIGATION_PROMPT_AUDIO_FOCUS, EcarxKx11HeadUnit.detected)
 
     fun saveNavigationPromptAudioFocus(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -626,7 +626,7 @@ object AirPlayPersistence {
 
     fun loadLocationReportingEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_LOCATION_REPORTING_ENABLED, false)
+            .getBoolean(KEY_LOCATION_REPORTING_ENABLED, EcarxKx11HeadUnit.detected)
 
     fun saveLocationReportingEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -734,7 +734,7 @@ object AirPlayPersistence {
 
     fun loadFps(context: Context): Int = AirPlayDisplaySettings.sanitizeFps(
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_FPS, 30),
+            .getInt(KEY_FPS, if (EcarxKx11HeadUnit.detected) 60 else 30),
     )
 
     /** Music buffer for the session's transport. Wireless and wired USB have separate settings. */
