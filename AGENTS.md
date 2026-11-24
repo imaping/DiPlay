@@ -83,3 +83,38 @@ Spacing, size and shape in the Settings screen MUST come from one place.
    `AdaptiveSettingsUiTest.overviewLinksToEveryOtherCategory` checks this.
 5. A layout change MUST include compact and full screenshots with a large font scale.
    Add an Arabic (right-to-left) screenshot when the change touches row alignment.
+
+## 本地定制与上游同步规范（低冲突改造原则）
+
+本仓库需要长期与上游主库同步。为尽量避免 `git merge` / `git rebase` 冲突，所有本地定制、车型适配或诊断增强，**必须优先采用“独立扩展文件 + 组合/装饰器 + 最小化接线点”的方式**，避免直接大面积修改主库原有文件。
+
+### 核心原则
+
+1. **优先新增独立文件，而非修改上游原有类**
+   - 将新增逻辑、车型适配或诊断封装集中在**同包下的独立新文件**中（例如 `common/src/main/java/com/shilapi/xcertplay/EcarxLocationEnhancer.kt`），不要把自定义逻辑散落到多个上游文件里。
+   - 保持同包名可以让原文件调用时**无需新增 `import`**，进一步避免文件头部 import 区产生合并冲突。
+
+2. **优先组合与接口装饰器（Decorator），而非修改原类或强行继承**
+   - Kotlin 类默认 `final`，且项目中大量车机适配器是 `object` 单例（如 `EcarxWheelSpeed`），不要为了继承去给上游类加 `open` / `protected`。
+   - 优先实现或包装上游已有稳定接口（例如 `Iap2LocationProvider`、`VehicleSpeedSource` 等）：
+     - 需要替换某个组件行为时：在独立文件中新建该接口的实现类（如 `GpsOnlyCarPlayLocationProvider : Iap2LocationProvider`），原实现文件保持 **0 改动**。
+     - 需要对已有组件做日志增强、过滤、单位换算或兜底时：新建装饰器类包装原实例并透传调用（如 `DiagnosticVehicleSpeedSource(delegate: VehicleSpeedSource)`），原组件文件保持 **0 改动**。
+
+3. **热点文件只保留最小化单点接入（Hook）**
+   - 对上游高频变动的大文件（如 `CarPlayHostActivity.kt`、`DiPlayActivity.kt`、`CarPlayController.kt` 等），只在必要的装配位置替换或插入**尽可能少的行数**（理想为 1 行工厂方法调用，如 `EcarxLocationEnhancer.create(this, ::appendLog)`）。
+   - 不要顺手重构、格式化或改动接入点之外的无关代码与注释。
+
+4. **不破坏上游原有日志格式与接口契约**
+   - 上游可能存在针对日志文本或公开签名的单元测试（例如 `VehicleSpeedLocationProvider` 的 `Location: last 60 s ...` 日志格式），增强日志应作为**新增独立日志行**在自定义封装中输出，不改动上游已有日志模板与公开方法签名。
+
+5. **改造前先评估冲突面**
+   - 动手修改前，先用 `git log` 或查看文件规模确认目标文件是否属于上游热点文件；只有在确实没有接口边界、无法通过包装/独立实现完成时，才允许对上游原文件做最小化直接修改，并在修改说明中列出具体接入点。
+
+### 参考范例
+
+- **ECARX（星越L / KX11）位置与轮速增强**：
+  - 独立实现与装饰器：`common/src/main/java/com/shilapi/xcertplay/EcarxLocationEnhancer.kt`
+  - 上游原文件变动：
+    - `EcarxWheelSpeed.kt`：0 改动
+    - `AndroidCarPlayLocationProvider.kt`：0 改动
+    - `CarPlayHostActivity.kt`：仅 ECARX 分支 1 处工厂调用接入（无新增 `import`）
