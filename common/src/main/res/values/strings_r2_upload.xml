@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="r2_upload_report">Upload report to R2</string>
+    <string name="r2_upload_in_progress">Uploading report…</string>
+    <string name="r2_upload_config_title">R2 upload endpoint</string>
+    <string name="r2_upload_config_description">Enter your Cloudflare Worker upload URL and Bearer token. Reports are gzip-compressed and uploaded only when you tap upload.</string>
+    <string name="r2_upload_endpoint_hint">Worker URL (https://…)</string>
+    <string name="r2_upload_token_hint">Bearer token (optional)</string>
+    <string name="r2_upload_status_configured">Configured</string>
+    <string name="r2_upload_status_default">Build default</string>
+    <string name="r2_upload_status_not_configured">Not set</string>
+    <string name="r2_upload_save">Save</string>
+    <string name="r2_upload_save_and_upload">Save and upload</string>
+    <string name="r2_upload_use_default">Use default</string>
+    <string name="r2_upload_invalid_endpoint">Enter a valid http:// or https:// URL without query parameters.</string>
+    <string name="r2_upload_success_title">Report uploaded to R2</string>
+    <string name="r2_upload_success_message">Object key: %1$s\nUploaded: %2$s (raw %3$s)</string>
+    <string name="r2_upload_failed_title">Could not upload report</string>
+    <string name="r2_upload_retry">Retry</string>
+    <string name="r2_upload_save_local">Save locally</string>
+    <string name="r2_upload_error_not_configured">R2 upload URL is not configured yet.</string>
+    <string name="r2_upload_error_no_internet">No validated internet connection is available. Check mobile data or Wi-Fi and try again.</string>
+    <string name="r2_upload_error_unauthorized">Upload rejected by server (HTTP %1$d). Check your Bearer token.</string>
+    <string name="r2_upload_error_http">Server returned an error: %1$s</string>
+    <string name="r2_upload_error_network">Network error: %1$s</string>
+    <string name="r2_upload_error_generic">Upload failed: %1$s</string>
+</resources>

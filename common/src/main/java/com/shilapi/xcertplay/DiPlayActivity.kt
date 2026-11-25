@@ -1801,6 +1801,15 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             card.addView(exportButton, settingsButtonLayout())
             card.addView(button(getString(R.string.choose_save_location), false) { chooseReportDestination() }, settingsButtonLayout())
             card.addView(button(getString(R.string.settings_report_on_phone), false) { openBackup(SettingsCategory.DIAGNOSTICS) }, settingsButtonLayout())
+            DiagnosticR2UploadUi.attach(
+                activity = this,
+                card = card,
+                createButton = { text, onClick -> button(text, false, onClick) },
+                buttonLayout = { settingsButtonLayout() },
+                reportFileName = ::reportFileName,
+                reportText = ::diagnosticReportText,
+                fallbackSaveLocal = ::saveReportToDownloads,
+            )
             val destination = getString(R.string.reports_save_to_downloads_diplay)
             card.addView(label(destination + getString(R.string.nothing_is_sent_automatically_protocol_payloads_and_creden), 14, MUTED).apply { setPadding(0, dp(12), 0, 0) })
             toggle(card, getString(R.string.settings_fps_counter), getString(R.string.settings_fps_counter_description),

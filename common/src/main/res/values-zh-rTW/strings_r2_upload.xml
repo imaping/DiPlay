@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="r2_upload_report">上傳診斷報告到 R2</string>
+    <string name="r2_upload_in_progress">正在上傳診斷報告…</string>
+    <string name="r2_upload_config_title">R2 上傳設定</string>
+    <string name="r2_upload_config_description">輸入你的 Cloudflare Worker 上傳網址與 Bearer Token。僅在手動點擊上傳時，才會將診斷報告以 Gzip 壓縮後上傳。</string>
+    <string name="r2_upload_endpoint_hint">Worker 網址（https://…）</string>
+    <string name="r2_upload_token_hint">Bearer Token（選填）</string>
+    <string name="r2_upload_status_configured">已設定</string>
+    <string name="r2_upload_status_default">建置預設</string>
+    <string name="r2_upload_status_not_configured">未設定</string>
+    <string name="r2_upload_save">儲存</string>
+    <string name="r2_upload_save_and_upload">儲存並上傳</string>
+    <string name="r2_upload_use_default">恢復預設</string>
+    <string name="r2_upload_invalid_endpoint">請輸入有效的 http:// 或 https:// 網址，且不要包含查詢參數。</string>
+    <string name="r2_upload_success_title">診斷報告已上傳到 R2</string>
+    <string name="r2_upload_success_message">物件路徑：%1$s\n已上傳：%2$s（原始 %3$s）</string>
+    <string name="r2_upload_failed_title">無法上傳診斷報告</string>
+    <string name="r2_upload_retry">重試</string>
+    <string name="r2_upload_save_local">儲存到本機</string>
+    <string name="r2_upload_error_not_configured">尚未設定 R2 上傳網址。</string>
+    <string name="r2_upload_error_no_internet">目前沒有可用的網際網路連線，請檢查車機行動網路或 Wi-Fi 後重試。</string>
+    <string name="r2_upload_error_unauthorized">伺服器拒絕了上傳請求（HTTP %1$d），請檢查 Bearer Token 是否正確。</string>
+    <string name="r2_upload_error_http">伺服器傳回錯誤：%1$s</string>
+    <string name="r2_upload_error_network">網路錯誤：%1$s</string>
+    <string name="r2_upload_error_generic">上傳失敗：%1$s</string>
+</resources>
