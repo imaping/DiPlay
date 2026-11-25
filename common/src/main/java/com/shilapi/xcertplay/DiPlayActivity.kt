@@ -111,7 +111,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 internal enum class SettingsCategory {
-    OVERVIEW, CONNECTION, DISPLAY, AUDIO, NAVIGATION, CLUSTER, VEHICLE, LANGUAGE, DIAGNOSTICS, ADVANCED, ABOUT,
+    OVERVIEW, CONNECTION, DISPLAY, AUDIO, NAVIGATION, VEHICLE, GEELY, LANGUAGE, DIAGNOSTICS, ADVANCED, ABOUT,
 }
 
 /** A settings card. Every entry needs one category in [SettingsInformationArchitecture]; see AGENTS.md. */
@@ -153,14 +153,15 @@ internal object SettingsInformationArchitecture {
         SettingsCategory.DISPLAY to setOf(SettingsSection.DISPLAY_AND_PERFORMANCE),
         SettingsCategory.AUDIO to setOf(SettingsSection.AUDIO_ROUTING),
         SettingsCategory.NAVIGATION to setOf(SettingsSection.LOCATION, SettingsSection.BYD_NAVIGATION),
-        SettingsCategory.CLUSTER to setOf(SettingsSection.CLUSTER_MAP),
         SettingsCategory.VEHICLE to setOf(
             SettingsSection.CARPLAY_CONTROLS,
             SettingsSection.WHEEL_KEYS,
             SettingsSection.CAR_BUTTON,
         ),
+        SettingsCategory.GEELY to emptySet(),
         SettingsCategory.DIAGNOSTICS to setOf(SettingsSection.DIAGNOSTICS),
         SettingsCategory.ADVANCED to setOf(
+            SettingsSection.CLUSTER_MAP,
             SettingsSection.LAUNCHER_BUBBLE,
             SettingsSection.EXPERIMENTAL_DISPLAY,
             SettingsSection.ADVANCED_MEDIA,
@@ -1147,8 +1148,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         SettingsCategory.DISPLAY -> R.drawable.ic_dp_display
         SettingsCategory.AUDIO -> R.drawable.ic_dp_audio
         SettingsCategory.NAVIGATION -> R.drawable.ic_dp_navigation
-        SettingsCategory.CLUSTER -> R.drawable.ic_dp_dashboard
         SettingsCategory.VEHICLE -> R.drawable.ic_dp_car
+        SettingsCategory.GEELY -> R.drawable.ic_dp_dashboard
         SettingsCategory.DIAGNOSTICS -> R.drawable.ic_dp_diagnostics
         SettingsCategory.ADVANCED -> R.drawable.ic_dp_advanced
         SettingsCategory.LANGUAGE -> R.drawable.ic_dp_language
@@ -1161,8 +1162,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         SettingsCategory.DISPLAY -> R.string.settings_display
         SettingsCategory.AUDIO -> R.string.audio
         SettingsCategory.NAVIGATION -> R.string.settings_navigation
-        SettingsCategory.CLUSTER -> R.string.settings_cluster
         SettingsCategory.VEHICLE -> R.string.settings_vehicle
+        SettingsCategory.GEELY -> R.string.geely_settings_title
         SettingsCategory.DIAGNOSTICS -> R.string.diagnostics
         SettingsCategory.ADVANCED -> R.string.settings_advanced
         SettingsCategory.LANGUAGE -> R.string.language_section_title
@@ -1176,8 +1177,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             SettingsCategory.DISPLAY -> displaySettings(content)
             SettingsCategory.AUDIO -> audioSettings(content)
             SettingsCategory.NAVIGATION -> navigationSettings(content)
-            SettingsCategory.CLUSTER -> clusterSettings(content)
             SettingsCategory.VEHICLE -> vehicleSettings(content)
+            SettingsCategory.GEELY -> geelySettings(content)
             SettingsCategory.DIAGNOSTICS -> diagnosticsSettings(content)
             SettingsCategory.ADVANCED -> advancedSettings(content)
             SettingsCategory.LANGUAGE -> {
@@ -1208,8 +1209,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             SettingsCategory.DISPLAY to R.string.settings_display_summary,
             SettingsCategory.AUDIO to R.string.settings_audio_summary,
             SettingsCategory.NAVIGATION to R.string.settings_navigation_summary,
-            SettingsCategory.CLUSTER to R.string.settings_cluster_summary,
             SettingsCategory.VEHICLE to R.string.settings_vehicle_summary,
+            SettingsCategory.GEELY to R.string.geely_settings_summary,
             SettingsCategory.LANGUAGE to R.string.settings_language_summary,
             SettingsCategory.ABOUT to R.string.about_diplay,
             SettingsCategory.DIAGNOSTICS to R.string.settings_diagnostics_summary,
@@ -1403,9 +1404,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         }
     }
 
-    private fun clusterSettings(content: LinearLayout) {
-        settingsPageTitle(content, getString(R.string.settings_cluster), getString(R.string.settings_cluster_summary))
-        renderSections(content, SettingsInformationArchitecture.sectionsByCategory.getValue(SettingsCategory.CLUSTER))
+    private fun geelySettings(content: LinearLayout) {
+        settingsPageTitle(content, getString(R.string.geely_settings_title), getString(R.string.geely_settings_summary))
         GeelyClusterEnhancer.appendSettingsCard(this, content, palette, searchIndexSink) { render() }
     }
 

@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="settings_cluster">Панель приладів</string>
-    <string name="settings_cluster_summary">Карта на панелі приладів, шкали та HUD</string>
-</resources>

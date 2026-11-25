@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="geely_settings_title">Geely</string>
+    <string name="geely_settings_summary">Fake Ultra cluster, self-drawn HUD and Geely settings</string>
+</resources>

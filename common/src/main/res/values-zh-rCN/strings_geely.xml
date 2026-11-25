@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="geely_settings_title">吉利设置</string>
+    <string name="geely_settings_summary">Fake Ultra 仪表、自绘 HUD 与吉利专属设置</string>
+</resources>

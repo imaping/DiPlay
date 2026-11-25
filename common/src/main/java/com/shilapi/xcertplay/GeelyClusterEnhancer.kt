@@ -475,8 +475,8 @@ internal object GeelyClusterEnhancer {
     internal var lastPreviewRouteActive: Boolean = true
 
     /**
-     * Appends the Geely Fake Ultra & Self-Draw HUD configuration card into the unified
-     * Instrument Cluster settings page, themed with the main UI's [palette].
+     * Appends the Geely Fake Ultra & Self-Draw HUD configuration card into the dedicated
+     * Geely settings page, themed with the main UI's [palette].
      */
     fun appendSettingsCard(
         activity: Activity,
@@ -485,7 +485,6 @@ internal object GeelyClusterEnhancer {
         searchIndexSink: MutableList<String>? = null,
         onStateChanged: () -> Unit = {},
     ) {
-        if (!GeelyVehicleDetector.isGeelyOrEcarx(activity)) return
         searchIndexSink?.add(SETTINGS_CARD_TITLE)
         if (searchIndexSink != null) return
         val card = GeelyClusterSettingsPanel(
