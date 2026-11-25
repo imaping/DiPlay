@@ -175,13 +175,12 @@ internal object EcarxKx11WheelKeys {
 
     /** Cancels any active KX11 key-learning session and restores runtime binding state. */
     fun cancelLearning() {
-        val previous: LearningSession?
-        synchronized(this) {
-            previous = learning
-            if (previous == null) return
+        val previous = synchronized(this) {
+            val current = learning ?: return
             learning = null
             handler.removeCallbacks(endLearning)
             syncBindingLocked()
+            current
         }
         previous.cancelled.invoke()
     }
