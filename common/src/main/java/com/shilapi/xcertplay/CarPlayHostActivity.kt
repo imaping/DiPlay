@@ -904,7 +904,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         }
         NavigationWidgetUpdater.attach(applicationContext)
         CarPlayCallKeys.install(applicationContext)
-        GeelyClusterEnhancer.attachHost(this, ::appendLog)
+        GeelyClusterEnhancer.attachHost(this, ::appendLog) { night -> nightModeController.systemChanged(night) }
         CenterMapOverlay.requestShow = ::showCenterMap
         MapMirrors.sink = mirrorSink
         MapMirrors.onChanged = mirrorsChanged
@@ -923,7 +923,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         initializeSessionLog()
         lastConfiguration = Configuration(resources.configuration)
         darkMode = savedInstanceState?.getBoolean("carplay_night_active")
-            ?: nightModeOrNull(resources.configuration.uiMode) ?: false
+            ?: GeelyEcarxDayNightReader.resolveSystemNight(nightModeOrNull(resources.configuration.uiMode) ?: false)
         appNight = resolveAppNightNow(darkMode)
         logThemeState(ThemeModeDiagnostics.Source.CREATE, resources.configuration)
         advancedAudioChannelMappingSupported =
@@ -974,7 +974,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         nightSchedule = AirPlayPersistence.loadCarPlayNightSchedule(this)
         nightModeController.configure(
             carPlayNightMode,
-            nightModeOrNull(resources.configuration.uiMode) ?: false,
+            GeelyEcarxDayNightReader.resolveSystemNight(nightModeOrNull(resources.configuration.uiMode) ?: false),
             ambientLightThreshold,
             ambientDelaySeconds,
             nightSchedule,
@@ -1255,7 +1255,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         val savedThreshold = AirPlayPersistence.loadAmbientLightThreshold(this)
         val savedDelay = AirPlayPersistence.loadAmbientDelaySeconds(this)
         val savedSchedule = AirPlayPersistence.loadCarPlayNightSchedule(this)
-        val systemNight = nightModeOrNull(resources.configuration.uiMode) ?: false
+        val systemNight = GeelyEcarxDayNightReader.resolveSystemNight(nightModeOrNull(resources.configuration.uiMode) ?: false)
         if (savedNightMode != carPlayNightMode || savedThreshold != ambientLightThreshold ||
             savedDelay != ambientDelaySeconds || savedSchedule != nightSchedule) {
             carPlayNightMode = savedNightMode
@@ -5880,7 +5880,9 @@ open class CarPlayHostActivity : ComponentActivity() {
         lastConfiguration = Configuration(newConfig)
         nightModeDiagnosticSource = source
         try {
-            nightModeOrNull(newConfig.uiMode)?.let { nightModeController.systemChanged(it) }
+            if (GeelyEcarxDayNightReader.latestNight() == null) {
+                nightModeOrNull(newConfig.uiMode)?.let { nightModeController.systemChanged(it) }
+            }
         } finally {
             nightModeDiagnosticSource = ThemeModeDiagnostics.Source.CARPLAY_MODE
         }

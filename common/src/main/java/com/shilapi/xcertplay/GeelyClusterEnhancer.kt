@@ -71,6 +71,8 @@ internal object GeelyClusterEnhancer {
     private var activeDimWatcher: GeelyDimLogcatWatcher? = null
     private var musicSubscription: (() -> Unit)? = null
     private var hostNightObserverRemoval: (() -> Unit)? = null
+    private var vehicleDayNightRemoval: (() -> Unit)? = null
+    private var carPlayNightSink: ((Boolean) -> Unit)? = null
 
     private val currentFakeUltraView: GeelyFakeUltraOverlayView?
         get() = persistentThemeWindow?.takeIf { it.attached }?.view ?: activeFakeUltraView
@@ -119,16 +121,28 @@ internal object GeelyClusterEnhancer {
         GeelyClusterAppearanceMode.DARK -> true
         GeelyClusterAppearanceMode.LIGHT -> false
         GeelyClusterAppearanceMode.AUTO -> {
-            AppAppearanceRuntime.hostNight()
-                ?: presentationNightMode
-                ?: resolveConfiguredCarPlayNight(context ?: hostAppContext ?: currentFakeUltraView?.context)
+            val ctx = context ?: hostAppContext ?: currentFakeUltraView?.context
+            val cpMode = ctx?.let { AirPlayPersistence.loadCarPlayNightMode(it) } ?: CarPlayNightMode.SYSTEM
+            val explicitOverride = cpMode == CarPlayNightMode.DAY ||
+                cpMode == CarPlayNightMode.NIGHT ||
+                cpMode == CarPlayNightMode.SCHEDULE
+            if (explicitOverride) {
+                AppAppearanceRuntime.hostNight() ?: resolveConfiguredCarPlayNight(ctx)
+            } else {
+                GeelyEcarxDayNightReader.latestNight()
+                    ?: AppAppearanceRuntime.hostNight()
+                    ?: presentationNightMode
+                    ?: resolveConfiguredCarPlayNight(ctx)
+            }
         }
     }
 
     private fun resolveConfiguredCarPlayNight(context: Context?): Boolean {
         val ctx = context ?: return false
-        val systemNight = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
+        val systemNight = GeelyEcarxDayNightReader.resolveSystemNight(
+            (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES,
+        )
         return when (AirPlayPersistence.loadCarPlayNightMode(ctx)) {
             CarPlayNightMode.DAY -> false
             CarPlayNightMode.NIGHT -> true
@@ -138,6 +152,16 @@ internal object GeelyClusterEnhancer {
                 AirPlayPersistence.loadCarPlayNightSchedule(ctx).isNight(minuteOfDay)
             }
             CarPlayNightMode.SYSTEM, CarPlayNightMode.AMBIENT -> systemNight
+        }
+    }
+
+    private fun ensureVehicleDayNightObserver(context: Context) {
+        if (vehicleDayNightRemoval != null) return
+        val app = context.applicationContext
+        vehicleDayNightRemoval = GeelyEcarxDayNightReader.observe(app, hostLogger) { vehicleNight ->
+            presentationNightMode = vehicleNight
+            carPlayNightSink?.invoke(vehicleNight)
+            runOnMain { applyEffectiveNight(app) }
         }
     }
 
@@ -242,6 +266,7 @@ internal object GeelyClusterEnhancer {
         hostAppContext = app
         GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
+        ensureVehicleDayNightObserver(app)
         runOnMain {
             syncPersistentThemeWindow(app, requestFullScreen = true)
         }
@@ -263,16 +288,24 @@ internal object GeelyClusterEnhancer {
     fun onAppTaskRemoved(context: Context) {
         val app = context.applicationContext
         runOnMain {
+            vehicleDayNightRemoval?.invoke()
+            vehicleDayNightRemoval = null
+            carPlayNightSink = null
             closeStandaloneOverlayWindow()
             shutdownPersistentTheme(app, handBackIfIdle = true)
         }
     }
 
     /** Called in `CarPlayHostActivity.onCreate` / `onResume` to start standalone 2038 overlay if enabled. */
-    fun attachHost(context: Context, log: (String) -> Unit = {}) {
+    fun attachHost(
+        context: Context,
+        log: (String) -> Unit = {},
+        onVehicleNightChanged: ((Boolean) -> Unit)? = null,
+    ) {
         val app = context.applicationContext
         hostAppContext = app
         hostLogger = log
+        carPlayNightSink = onVehicleNightChanged
         GeelyEcarxSensorReader.setLogger { msg -> hostLogger(msg) }
         if (CarPlayGlance.laneListener !== laneListenerHook) {
             previousLaneListener = CarPlayGlance.laneListener
@@ -280,12 +313,14 @@ internal object GeelyClusterEnhancer {
         }
         GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
+        ensureVehicleDayNightObserver(app)
         syncStandaloneOverlayWindow(app)
         syncPersistentThemeWindow(app, requestFullScreen = false)
     }
 
     /** Called in `CarPlayHostActivity.onDestroy`. */
     fun detachHost() {
+        carPlayNightSink = null
         if (CarPlayGlance.laneListener === laneListenerHook) {
             CarPlayGlance.laneListener = previousLaneListener
             previousLaneListener = null
@@ -300,6 +335,8 @@ internal object GeelyClusterEnhancer {
         if (!keepThemeAlive) {
             hostNightObserverRemoval?.invoke()
             hostNightObserverRemoval = null
+            vehicleDayNightRemoval?.invoke()
+            vehicleDayNightRemoval = null
             hostAppContext?.let { app ->
                 runCatching { GeelyClusterPrefs.prefs(app).unregisterOnSharedPreferenceChangeListener(prefsListener) }
             }
@@ -485,6 +522,7 @@ internal object GeelyClusterEnhancer {
         isFullScreenPresentationActive = true
         GeelyClusterPrefs.prefs(context).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
+        ensureVehicleDayNightObserver(context)
         currentFakeUltraView?.apply {
             carPlayConnected = true
             routeActive = latestGuidance != null
@@ -1208,8 +1246,10 @@ private class GeelyClusterSettingsPanel(
             },
         )
         val effectiveNightNow = GeelyClusterEnhancer.resolveEffectiveNightMode(config, activity)
+        val hasVehicleSignal = GeelyEcarxDayNightReader.latestNight() != null
         val autoHint = if (config.appearanceMode == GeelyClusterAppearanceMode.AUTO) {
-            if (effectiveNightNow) "·当前深色" else "·当前浅色"
+            val tag = if (hasVehicleSignal) "原车" else "当前"
+            if (effectiveNightNow) "·${tag}深色" else "·${tag}浅色"
         } else {
             ""
         }
