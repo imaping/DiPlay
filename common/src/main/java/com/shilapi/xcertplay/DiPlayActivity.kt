@@ -4545,7 +4545,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             // goes first because arming it ends any earlier learning, the service's included.
             val inWindow = (role == WheelZoomSettings.Role.SIRI ||
                 role == WheelZoomSettings.Role.MEDIA_PLAY_PAUSE) && learnInWindow(role, cancelled, refused, done)
-            val started = WheelKeyService.learn(role, cancelled, refused) { _, key -> done(key) } || inWindow
+            val inKx11 = EcarxKx11WheelKeys.learn(this, role, cancelled, refused, done)
+            val started = WheelKeyService.learn(role, cancelled, refused) { _, key -> done(key) } || inWindow || inKx11
             if (started) assign.text = getString(R.string.wheel_key_press, name)
             else toast(getString(R.string.wheel_keys_service_off))
         }
@@ -4581,6 +4582,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
 
     private fun cancelKeyLearning() {
         WheelKeyService.cancelLearning()
+        EcarxKx11WheelKeys.cancelLearning()
         handler.removeCallbacks(endWindowLearning)
         val cancelled = windowLearning?.cancelled
         windowLearning = null

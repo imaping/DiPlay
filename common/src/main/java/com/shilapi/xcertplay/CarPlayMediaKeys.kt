@@ -92,6 +92,7 @@ internal object CarPlayMediaKeys {
         // Read once per connection, as the session's audio setup reads it.
         carBluetoothAudio = AirPlayPersistence.loadCarBluetoothAudio(context.applicationContext)
         GeelyWheelKeys.start(context)
+        EcarxKx11WheelKeys.start(context)
         com.shilapi.xcertplay.media.AmbientMusicController.claimPlaybackOwner(next)
         next.playbackListener = { playing ->
             com.shilapi.xcertplay.media.AmbientMusicController.phonePlaybackChanged(next, playing)
@@ -114,6 +115,7 @@ internal object CarPlayMediaKeys {
         expected.artworkListener = null
         controller = null
         GeelyWheelKeys.stop()
+        EcarxKx11WheelKeys.stop()
         releaseLocked()
     }
 

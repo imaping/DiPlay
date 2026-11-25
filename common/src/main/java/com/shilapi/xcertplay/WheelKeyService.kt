@@ -538,7 +538,10 @@ class WheelKeyService : AccessibilityService() {
 
         fun isLearning(): Boolean = running?.learning != null
 
-        fun settingsChanged() { running?.onMain { settingsChanged() } }
+        fun settingsChanged() {
+            running?.onMain { settingsChanged() }
+            EcarxKx11WheelKeys.settingsChanged()
+        }
 
         fun enabledInSettings(context: Context): Boolean {
             val list = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
