@@ -1210,10 +1210,11 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
         }
 
-        // 2. Left Dial (Speedometer + Fuel %) at (88, 98, 520x520)
+        // 2. Left Dial (Speedometer + Fuel %) raised & scaled cleanly above OEM bottom bar
         if (config.dialLeftEnabled) {
             val leftSave = canvas.save()
-            canvas.translate(88f, 98f)
+            canvas.translate(LEFT_DIAL_X, DIAL_TOP_Y)
+            canvas.scale(DIAL_SCALE, DIAL_SCALE)
             canvas.clipRect(0f, 0f, 520f, 520f)
             val animatingLeft = ultraThemeRenderer.drawLeftSpeedDial(
                 canvas = canvas,
@@ -1230,10 +1231,11 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             canvas.restoreToCount(leftSave)
         }
 
-        // 3. Right Dial (Tachometer / Gear / Album Art when navigating) at (1312, 98, 520x520)
+        // 3. Right Dial (Tachometer / Gear / Album Art when navigating)
         if (config.dialRightEnabled) {
             val rightSave = canvas.save()
-            canvas.translate(1312f, 98f)
+            canvas.translate(RIGHT_DIAL_X, DIAL_TOP_Y)
+            canvas.scale(DIAL_SCALE, DIAL_SCALE)
             canvas.clipRect(0f, 0f, 520f, 520f)
             val rightArtwork = if (effectiveRouteActive && config.albumArtEnabled && hasAlbumArt) rawArtwork else null
             val animatingRight = ultraThemeRenderer.drawRightTachDial(
@@ -1312,7 +1314,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         if (art.isRecycled) return
         val size = 280f
         val left = (1920f - size) / 2f
-        val top = 210f
+        val top = 172f
         centerCoverRect.set(left, top, left + size, top + size)
 
         // Subtle outer shadow card
@@ -1337,6 +1339,11 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     }
 
     companion object {
+        private const val DIAL_SCALE = 0.92f
+        private const val DIAL_TOP_Y = 68f
+        private const val LEFT_DIAL_X = 112f
+        private const val RIGHT_DIAL_X = 1330f
+
         /** 3-pass separable box blur on 192x72 downsampled bitmap matching `Lpa0;` / `Lqa0;`. */
         fun createBoxBlurredBitmap(source: Bitmap, width: Int = 192, height: Int = 72, radius: Int = 14): Bitmap? =
             runCatching {

@@ -151,9 +151,9 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         }
 
         val centerX = 960f
-        val timeBaseY = 368f
-        val dividerY = 398f
-        val dateBaseY = 442f
+        val timeBaseY = 336f
+        val dividerY = 366f
+        val dateBaseY = 410f
 
         val timeColor = when {
             style == GeelyClusterThemeStyle.RETRO_VFD && !useLightPalette -> accentColor
@@ -191,16 +191,16 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
             strokePaint.strokeWidth = 2.2f
             strokePaint.strokeCap = Paint.Cap.ROUND
             strokePaint.color = withAlpha(accentColor, if (useLightPalette) 145 else 150)
-            canvas.drawLine(centerX - 186f, 266f, centerX - 166f, 266f, strokePaint)
-            canvas.drawLine(centerX - 186f, 266f, centerX - 186f, 452f, strokePaint)
-            canvas.drawLine(centerX - 186f, 452f, centerX - 166f, 452f, strokePaint)
-            canvas.drawLine(centerX + 186f, 266f, centerX + 166f, 266f, strokePaint)
-            canvas.drawLine(centerX + 186f, 266f, centerX + 186f, 452f, strokePaint)
-            canvas.drawLine(centerX + 186f, 452f, centerX + 166f, 452f, strokePaint)
+            canvas.drawLine(centerX - 186f, 234f, centerX - 166f, 234f, strokePaint)
+            canvas.drawLine(centerX - 186f, 234f, centerX - 186f, 420f, strokePaint)
+            canvas.drawLine(centerX - 186f, 420f, centerX - 166f, 420f, strokePaint)
+            canvas.drawLine(centerX + 186f, 234f, centerX + 166f, 234f, strokePaint)
+            canvas.drawLine(centerX + 186f, 234f, centerX + 186f, 420f, strokePaint)
+            canvas.drawLine(centerX + 186f, 420f, centerX + 166f, 420f, strokePaint)
         } else if (style == GeelyClusterThemeStyle.RETRO_VFD) {
             strokePaint.strokeWidth = 1.6f
             strokePaint.color = withAlpha(accentColor, if (useLightPalette) 125 else 95)
-            arcRect.set(centerX - 196f, 254f, centerX + 196f, 464f)
+            arcRect.set(centerX - 196f, 222f, centerX + 196f, 432f)
             canvas.drawRoundRect(arcRect, 14f, 14f, strokePaint)
         }
 
@@ -229,7 +229,11 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         canvas.drawText(dateText, centerX, dateBaseY, textPaint)
     }
 
-    /** Centered bottom music visualizer & song title pill (fallback to time/fuel when silent). */
+    /**
+     * Centered floating music visualizer & song title pill positioned cleanly above the factory
+     * QNX bottom status strip (`Y: 588..636`), with frosted capsule backing for high contrast
+     * regardless of whether the factory bottom bar is light or dark.
+     */
     fun drawUltraBottomMusicBar(
         canvas: Canvas,
         style: GeelyClusterThemeStyle,
@@ -242,31 +246,57 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         fallbackFuel: String,
     ): Boolean {
         val useLightPalette = style.supportsLightMode && !nightMode
+        val pillBgColor = if (useLightPalette) Color.argb(218, 245, 248, 252) else Color.argb(196, 10, 14, 22)
+        val pillStrokeColor = if (useLightPalette) Color.argb(92, 71, 85, 105) else withAlpha(accentColor, 115)
+        val pillTop = 588f
+        val pillBottom = 636f
+        val pillRadius = 24f
+
         val title = songTitle?.trim().orEmpty()
         if (title.isEmpty()) {
-            textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            textPaint.textSize = 22f
-            textPaint.color = if (useLightPalette) Color.argb(195, 36, 44, 54) else Color.argb(200, 224, 232, 240)
-            textPaint.textAlign = Paint.Align.CENTER
             val parts = listOf(fallbackTime, fallbackFuel).filter { it.isNotBlank() }
-            canvas.drawText(parts.joinToString("   ·   "), 960f, 696f, textPaint)
+            if (parts.isEmpty()) return false
+            val text = parts.joinToString("   ·   ")
+            textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            textPaint.textSize = 21f
+            textPaint.textAlign = Paint.Align.CENTER
+            val textW = textPaint.measureText(text)
+            val halfW = max(92f, textW / 2f + 24f).coerceAtMost(280f)
+            arcRect.set(960f - halfW, pillTop + 3f, 960f + halfW, pillBottom - 3f)
+            fillPaint.color = pillBgColor
+            canvas.drawRoundRect(arcRect, 21f, 21f, fillPaint)
+            strokePaint.strokeWidth = 1.2f
+            strokePaint.color = pillStrokeColor
+            canvas.drawRoundRect(arcRect, 21f, 21f, strokePaint)
+
+            textPaint.color = if (useLightPalette) Color.rgb(36, 44, 54) else Color.argb(232, 232, 238, 246)
+            canvas.drawText(text, 960f, 619f, textPaint)
             return false
         }
 
-        val textColor = if (useLightPalette) Color.rgb(34, 42, 52) else Color.argb(240, 244, 248, 252)
-        val lineColor = if (useLightPalette) Color.argb(140, 60, 72, 86) else withAlpha(accentColor, 165)
-        val eqColor = if (useLightPalette) Color.rgb(58, 72, 88) else withAlpha(accentColor, 235)
+        val textColor = if (useLightPalette) Color.rgb(28, 36, 46) else Color.argb(246, 246, 249, 253)
+        val eqColor = if (useLightPalette) accentColor else withAlpha(accentColor, 240)
 
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        textPaint.textSize = 26f
+        textPaint.textSize = 24f
         textPaint.textAlign = Paint.Align.LEFT
         val displayTitle = ellipsize(title, textPaint, 420f)
         val textW = textPaint.measureText(displayTitle)
         val eqW = 24f
         val gap = 10f
         val totalW = eqW + gap + textW
+        val pillHalfW = max(112f, totalW / 2f + 26f).coerceAtMost(276f)
+
+        // Floating frosted rounded pill backdrop
+        arcRect.set(960f - pillHalfW, pillTop, 960f + pillHalfW, pillBottom)
+        fillPaint.color = pillBgColor
+        canvas.drawRoundRect(arcRect, pillRadius, pillRadius, fillPaint)
+        strokePaint.strokeWidth = 1.4f
+        strokePaint.color = pillStrokeColor
+        canvas.drawRoundRect(arcRect, pillRadius, pillRadius, strokePaint)
+
         val startX = 960f - totalW / 2f
-        val baselineY = 695f
+        val baselineY = 620f
 
         val phase = (nowMs % 1200L) / 1200f * (2f * PI.toFloat())
         val h1 = if (isPlaying) 6f + 6f * (0.5f + 0.5f * sin(phase)) else 6f
@@ -280,12 +310,6 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
 
         textPaint.color = textColor
         canvas.drawText(displayTitle, startX + eqW + gap, baselineY, textPaint)
-
-        val underlineHalf = max(84f, totalW * 0.58f).coerceAtMost(240f)
-        strokePaint.color = lineColor
-        strokePaint.strokeWidth = 2.5f
-        strokePaint.strokeCap = Paint.Cap.ROUND
-        canvas.drawLine(960f - underlineHalf, 709f, 960f + underlineHalf, 709f, strokePaint)
 
         return isPlaying
     }
