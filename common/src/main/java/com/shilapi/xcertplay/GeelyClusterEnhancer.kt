@@ -653,6 +653,12 @@ internal object GeelyClusterEnhancer {
             persistentThemeWindow = newWindow
             // Hide any in-presentation duplicate dial view if toggled on mid-session.
             activeFakeUltraView?.visibility = View.GONE
+            // Re-attach the HUD/turn-card overlay above the newly created theme window so navigation
+            // cards always stay on the topmost Z-order layer even when toggled on mid-session.
+            if (overlayWindow?.attached == true) {
+                closeStandaloneOverlayWindow()
+                syncStandaloneOverlayWindow(appContext)
+            }
             GeelyClusterKeepAliveService.start(appContext)
             ensureDimController(appContext).forceReenterFullScreenMap(
                 if (requestFullScreen) "app-launch" else "theme-enabled",
