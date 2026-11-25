@@ -62,6 +62,7 @@ internal object GeelyClusterEnhancer {
     private var hostAppContext: Context? = null
     private var hostLogger: (String) -> Unit = {}
     private var overlayWindow: GeelySelfDrawOverlayWindow? = null
+    private var persistentThemeWindow: GeelyClusterThemeWindow? = null
 
     private var activeFakeUltraView: GeelyFakeUltraOverlayView? = null
     private var activePresentationSelfDrawView: GeelySelfDrawCanvasView? = null
@@ -70,6 +71,11 @@ internal object GeelyClusterEnhancer {
     private var activeDimWatcher: GeelyDimLogcatWatcher? = null
     private var musicSubscription: (() -> Unit)? = null
     private var hostNightObserverRemoval: (() -> Unit)? = null
+
+    private val currentFakeUltraView: GeelyFakeUltraOverlayView?
+        get() = persistentThemeWindow?.takeIf { it.attached }?.view ?: activeFakeUltraView
+
+    fun isPersistentThemeActive(): Boolean = persistentThemeWindow?.attached == true
 
     private var latestGuidance: ClusterTurnGuidance? = null
     @Volatile
@@ -115,7 +121,7 @@ internal object GeelyClusterEnhancer {
         GeelyClusterAppearanceMode.AUTO -> {
             AppAppearanceRuntime.hostNight()
                 ?: presentationNightMode
-                ?: resolveConfiguredCarPlayNight(context ?: hostAppContext ?: activeFakeUltraView?.context)
+                ?: resolveConfiguredCarPlayNight(context ?: hostAppContext ?: currentFakeUltraView?.context)
         }
     }
 
@@ -157,7 +163,7 @@ internal object GeelyClusterEnhancer {
     private fun applyEffectiveNight(context: Context) {
         val cfg = GeelyClusterPrefs.load(context)
         val effective = resolveEffectiveNightMode(cfg, context)
-        activeFakeUltraView?.apply {
+        currentFakeUltraView?.apply {
             nightMode = effective
             invalidate()
         }
@@ -223,8 +229,43 @@ internal object GeelyClusterEnhancer {
     }
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-        val ctx = hostAppContext ?: activeFakeUltraView?.context ?: return@OnSharedPreferenceChangeListener
+        val ctx = hostAppContext ?: currentFakeUltraView?.context ?: return@OnSharedPreferenceChangeListener
         refreshConfig(ctx)
+    }
+
+    /**
+     * Called once DiPlay launches (`DiPlayActivity.onCreate`) so the persistent cluster theme
+     * window can appear immediately even before an iPhone connects to CarPlay.
+     */
+    fun onAppLaunched(context: Context) {
+        val app = context.applicationContext
+        hostAppContext = app
+        GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
+        ensureHostNightObserver()
+        runOnMain {
+            syncPersistentThemeWindow(app, requestFullScreen = true)
+        }
+    }
+
+    /** Called when the user taps "关闭主题" in the keep-alive foreground notification. */
+    fun onKeepAliveStopRequested(context: Context) {
+        val app = context.applicationContext
+        runOnMain {
+            val cfg = GeelyClusterPrefs.load(app)
+            if (cfg.launchThemeOnStart) {
+                GeelyClusterPrefs.save(app, cfg.copy(launchThemeOnStart = false))
+            }
+            shutdownPersistentTheme(app, handBackIfIdle = true)
+        }
+    }
+
+    /** Called when DiPlay is swiped away from recents; hands the cluster back cleanly without altering saved prefs. */
+    fun onAppTaskRemoved(context: Context) {
+        val app = context.applicationContext
+        runOnMain {
+            closeStandaloneOverlayWindow()
+            shutdownPersistentTheme(app, handBackIfIdle = true)
+        }
     }
 
     /** Called in `CarPlayHostActivity.onCreate` / `onResume` to start standalone 2038 overlay if enabled. */
@@ -240,6 +281,7 @@ internal object GeelyClusterEnhancer {
         GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
         syncStandaloneOverlayWindow(app)
+        syncPersistentThemeWindow(app, requestFullScreen = false)
     }
 
     /** Called in `CarPlayHostActivity.onDestroy`. */
@@ -248,12 +290,20 @@ internal object GeelyClusterEnhancer {
             CarPlayGlance.laneListener = previousLaneListener
             previousLaneListener = null
         }
-        hostNightObserverRemoval?.invoke()
-        hostNightObserverRemoval = null
-        hostAppContext?.let { app ->
-            runCatching { GeelyClusterPrefs.prefs(app).unregisterOnSharedPreferenceChangeListener(prefsListener) }
-        }
+        latestGuidance = null
+        latestLanes = emptyList()
+        currentFakeUltraView?.clearCarPlayData()
         closeStandaloneOverlayWindow()
+
+        val keepThemeAlive = isPersistentThemeActive() &&
+            (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
+        if (!keepThemeAlive) {
+            hostNightObserverRemoval?.invoke()
+            hostNightObserverRemoval = null
+            hostAppContext?.let { app ->
+                runCatching { GeelyClusterPrefs.prefs(app).unregisterOnSharedPreferenceChangeListener(prefsListener) }
+            }
+        }
     }
 
     /**
@@ -271,7 +321,10 @@ internal object GeelyClusterEnhancer {
         isFullScreenPresentationActive = presentationShowing
 
         val routeActive = guidance != null
-        activeFakeUltraView?.routeActive = routeActive
+        currentFakeUltraView?.apply {
+            carPlayConnected = presentationShowing
+            this.routeActive = presentationShowing && routeActive
+        }
 
         syncStandaloneOverlayWindow(context.applicationContext)
 
@@ -345,18 +398,36 @@ internal object GeelyClusterEnhancer {
         currentRoot.clipChildren = true
         currentRoot.clipToPadding = true
 
-        val fakeUltraView = GeelyFakeUltraOverlayView(context).apply {
-            this.config = config
-            this.nightMode = effectiveNight
-            this.routeActive = latestGuidance != null
+        if (config.launchThemeOnStart) {
+            syncPersistentThemeWindow(context.applicationContext, requestFullScreen = false)
         }
-        currentRoot.addView(
-            fakeUltraView,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
+
+        val fakeUltraView: GeelyFakeUltraOverlayView? = if (isPersistentThemeActive()) {
+            // Reuse the persistent 2038 theme overlay directly to avoid duplicate dial rendering.
+            persistentThemeWindow?.view?.apply {
+                this.config = config
+                this.nightMode = effectiveNight
+                this.carPlayConnected = true
+                this.routeActive = latestGuidance != null
+                invalidate()
+            }
+            null
+        } else {
+            GeelyFakeUltraOverlayView(context).apply {
+                this.config = config
+                this.nightMode = effectiveNight
+                this.carPlayConnected = true
+                this.routeActive = latestGuidance != null
+            }.also { v ->
+                currentRoot.addView(
+                    v,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+            }
+        }
         outerRoot.addView(currentRoot, topViewportParams)
 
         // Full 1920x1080 self-draw fallback layer inside Presentation (used if 2038 overlay window is not attached)
@@ -414,11 +485,16 @@ internal object GeelyClusterEnhancer {
         isFullScreenPresentationActive = true
         GeelyClusterPrefs.prefs(context).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
+        currentFakeUltraView?.apply {
+            carPlayConnected = true
+            routeActive = latestGuidance != null
+            invalidate()
+        }
 
         musicSubscription?.invoke()
         musicSubscription = ClusterMusicState.observe { snapshot ->
-            activeFakeUltraView?.setArtwork(snapshot.artwork)
-            activeFakeUltraView?.setMusicInfo(snapshot.info.title, snapshot.info.playing)
+            currentFakeUltraView?.setArtwork(snapshot.artwork)
+            currentFakeUltraView?.setMusicInfo(snapshot.info.title, snapshot.info.playing)
         }
 
         val controller = ensureDimController(context)
@@ -454,21 +530,34 @@ internal object GeelyClusterEnhancer {
         activeDimWatcher?.close()
         activeDimWatcher = null
 
-        activeDimController?.restoreClassicCluster()
+        latestGuidance = null
+        latestLanes = emptyList()
+        currentFakeUltraView?.clearCarPlayData()
+
+        val keepThemeAlive = isPersistentThemeActive() &&
+            (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
+        if (!keepThemeAlive) {
+            activeDimController?.restoreClassicCluster()
+        }
 
         activeFakeUltraView = null
         activePresentationSelfDrawView = null
         activePresentationInnerRoot = null
-        overlayWindow?.view?.fullScreen = false
+        overlayWindow?.view?.apply {
+            fullScreen = false
+            guidance = null
+            lanes = emptyList()
+            invalidate()
+        }
     }
 
     /** Called when day/night mode changes on `ClusterMapPresentation`. */
     fun onNightModeChanged(night: Boolean) {
         presentationNightMode = night
-        val ctx = hostAppContext ?: activeFakeUltraView?.context
+        val ctx = hostAppContext ?: currentFakeUltraView?.context
         runOnMain {
             val effective = if (ctx != null) resolveEffectiveNightMode(GeelyClusterPrefs.load(ctx), ctx) else night
-            activeFakeUltraView?.apply {
+            currentFakeUltraView?.apply {
                 nightMode = effective
                 invalidate()
             }
@@ -485,10 +574,17 @@ internal object GeelyClusterEnhancer {
 
     fun refreshConfig(context: Context) {
         val appCtx = context.applicationContext
+        hostAppContext = appCtx
         runOnMain {
             val cfg = GeelyClusterPrefs.load(appCtx)
             val effectiveNight = resolveEffectiveNightMode(cfg, appCtx)
+            syncPersistentThemeWindow(appCtx, requestFullScreen = false)
             activeFakeUltraView?.apply {
+                config = cfg
+                nightMode = effectiveNight
+                invalidate()
+            }
+            persistentThemeWindow?.view?.apply {
                 config = cfg
                 nightMode = effectiveNight
                 invalidate()
@@ -508,6 +604,79 @@ internal object GeelyClusterEnhancer {
             activePresentationSelfDrawView?.visibility =
                 if (overlayWindow?.attached == true) View.INVISIBLE else View.VISIBLE
         }
+    }
+
+    private fun syncPersistentThemeWindow(appContext: Context, requestFullScreen: Boolean) {
+        if (!GeelyVehicleDetector.isGeelyOrEcarx(appContext)) {
+            shutdownPersistentTheme(appContext, handBackIfIdle = false)
+            return
+        }
+        val cfg = GeelyClusterPrefs.load(appContext)
+        if (!cfg.launchThemeOnStart || !cfg.hasAnyClusterVisual) {
+            shutdownPersistentTheme(appContext, handBackIfIdle = true)
+            return
+        }
+        val targetDisplay = GeelyVehicleDetector.findClusterDisplay(appContext)
+        if (targetDisplay == null) {
+            shutdownPersistentTheme(appContext, handBackIfIdle = false)
+            return
+        }
+        val effectiveNight = resolveEffectiveNightMode(cfg, appContext)
+        val currentWindow = persistentThemeWindow
+        if (currentWindow != null && currentWindow.attached &&
+            currentWindow.display.displayId == targetDisplay.displayId
+        ) {
+            currentWindow.view.apply {
+                config = cfg
+                nightMode = effectiveNight
+                carPlayConnected = isFullScreenPresentationActive
+                routeActive = isFullScreenPresentationActive && latestGuidance != null
+                invalidate()
+            }
+            GeelyClusterKeepAliveService.start(appContext)
+            if (requestFullScreen) {
+                ensureDimController(appContext).forceReenterFullScreenMap("theme-launch")
+                if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(true, appContext)
+            }
+            return
+        }
+        closePersistentThemeWindow()
+        val newWindow = GeelyClusterThemeWindow(appContext, targetDisplay, hostLogger)
+        if (newWindow.attach()) {
+            newWindow.view.apply {
+                config = cfg
+                nightMode = effectiveNight
+                carPlayConnected = isFullScreenPresentationActive
+                routeActive = isFullScreenPresentationActive && latestGuidance != null
+                invalidate()
+            }
+            persistentThemeWindow = newWindow
+            // Hide any in-presentation duplicate dial view if toggled on mid-session.
+            activeFakeUltraView?.visibility = View.GONE
+            GeelyClusterKeepAliveService.start(appContext)
+            ensureDimController(appContext).forceReenterFullScreenMap(
+                if (requestFullScreen) "app-launch" else "theme-enabled",
+            )
+            if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(true, appContext)
+        } else {
+            newWindow.close()
+        }
+    }
+
+    private fun shutdownPersistentTheme(appContext: Context, handBackIfIdle: Boolean) {
+        val wasAttached = isPersistentThemeActive()
+        closePersistentThemeWindow()
+        activeFakeUltraView?.visibility = View.VISIBLE
+        GeelyClusterKeepAliveService.stop(appContext)
+        if (wasAttached && handBackIfIdle && !isFullScreenPresentationActive) {
+            activeDimController?.restoreClassicCluster()
+            if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(false, appContext)
+        }
+    }
+
+    private fun closePersistentThemeWindow() {
+        persistentThemeWindow?.close()
+        persistentThemeWindow = null
     }
 
     private fun syncStandaloneOverlayWindow(appContext: Context) {
@@ -658,7 +827,8 @@ private class GeelyCompositePreviewView(context: Context) : View(context) {
         bgPaint.color = Color.rgb(8, 11, 16)
         canvas.drawRect(0f, 720f, 1920f, 1080f, bgPaint)
 
-        // 3. Render Fake Ultra dual dials, vignette & bottom bar in 1920x720
+        // 3. Render dual dials, vignette, center clock & bottom bar in 1920x720
+        fakeUltraView.carPlayConnected = previewRouteActive
         fakeUltraView.nightMode = previewNight
         fakeUltraView.measure(
             MeasureSpec.makeMeasureSpec(1920, MeasureSpec.EXACTLY),
@@ -991,6 +1161,22 @@ private class GeelyClusterSettingsPanel(
         }
 
         addSectionTitle(container, "仪表组件")
+        addSwitchRow(
+            container = container,
+            title = "软件启动时加载主题",
+            subtitle = "打开 DiPlay 即在仪表显示双圆盘与大号数字时钟；手机未连接或断开后主题不消失（隐藏地图/导航/音乐），后台通知保活；需授予悬浮窗权限。",
+            checked = config.launchThemeOnStart,
+        ) { checked ->
+            config = config.copy(launchThemeOnStart = checked)
+            onConfigUpdated()
+            if (checked && !Settings.canDrawOverlays(activity)) {
+                Toast.makeText(
+                    activity,
+                    "已开启启动加载主题，请先在「屏幕与权限」中授予悬浮窗权限",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
         addSwitchRow(
             container = container,
             title = "显示圆盘仪表",

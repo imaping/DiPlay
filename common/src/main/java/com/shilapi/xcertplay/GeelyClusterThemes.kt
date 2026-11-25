@@ -11,6 +11,9 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
@@ -42,6 +45,9 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
     private val coverRect = RectF()
     private val coverClipPath = Path()
     private val curvedTextPath = Path()
+    private val clockTimeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val clockDateZhFormatter = SimpleDateFormat("M月d日  ·  EEEE", Locale.CHINA)
+    private val clockDateIntlFormatter = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
 
     fun reset() {
         leftMainDamped.reset()
@@ -124,49 +130,103 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         fillPaint.shader = null
     }
 
-    /** Centered `CarPlay Ultra` standby watermark when not navigating and no album cover is active. */
+    /**
+     * Centered large digital clock (`HH:mm`) + date/weekday when standby or when CarPlay is not
+     * connected, styled to match the active theme's typography and day/night palette.
+     */
     fun drawStandbyWatermark(
         canvas: Canvas,
         style: GeelyClusterThemeStyle,
         nightMode: Boolean,
+        accentColor: Int = style.defaultAccentColor(nightMode),
     ) {
         val useLightPalette = style.supportsLightMode && !nightMode
-        val primaryColor = if (useLightPalette) Color.rgb(44, 50, 58) else Color.argb(238, 245, 248, 252)
-        val secondaryColor = if (useLightPalette) Color.rgb(92, 102, 114) else Color.argb(200, 218, 226, 236)
+        val now = Date()
+        val timeText = clockTimeFormatter.format(now)
+        val locale = Locale.getDefault()
+        val dateText = if (locale.language.equals("zh", ignoreCase = true)) {
+            clockDateZhFormatter.format(now)
+        } else {
+            clockDateIntlFormatter.format(now)
+        }
 
         val centerX = 960f
-        val baseY = 374f
+        val timeBaseY = 368f
+        val dividerY = 398f
+        val dateBaseY = 442f
 
-        textPaint.textAlign = Paint.Align.LEFT
-        textPaint.textSize = 54f
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-        val carPlayW = textPaint.measureText("CarPlay ")
-        textPaint.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-        val ultraW = textPaint.measureText("Ultra")
-        val badgeSize = 36f
-        val gap = 14f
-        val startX = centerX - (badgeSize + gap + carPlayW + ultraW) / 2f
-
-        val iconCx = startX + badgeSize / 2f
-        val iconCy = baseY - 18f
-        fillPaint.color = primaryColor
-        canvas.drawCircle(iconCx, iconCy, 16f, fillPaint)
-        fillPaint.color = if (useLightPalette) Color.rgb(236, 240, 244) else Color.rgb(12, 14, 20)
-        val tri = Path().apply {
-            moveTo(iconCx - 4f, iconCy - 8f)
-            lineTo(iconCx + 9f, iconCy)
-            lineTo(iconCx - 4f, iconCy + 8f)
-            close()
+        val timeColor = when {
+            style == GeelyClusterThemeStyle.RETRO_VFD && !useLightPalette -> accentColor
+            style == GeelyClusterThemeStyle.RETRO_VFD -> Color.rgb(18, 36, 28)
+            style == GeelyClusterThemeStyle.HERITAGE_GOLD && useLightPalette -> Color.rgb(35, 29, 20)
+            style == GeelyClusterThemeStyle.HERITAGE_GOLD -> Color.rgb(253, 248, 238)
+            useLightPalette -> Color.rgb(24, 32, 44)
+            else -> Color.argb(246, 248, 250, 252)
         }
-        canvas.drawPath(tri, fillPaint)
+        val dateColor = when {
+            style == GeelyClusterThemeStyle.RETRO_VFD -> if (useLightPalette) Color.rgb(217, 119, 6) else Color.rgb(255, 176, 32)
+            style == GeelyClusterThemeStyle.HERITAGE_GOLD -> if (useLightPalette) Color.rgb(115, 101, 78) else Color.rgb(235, 216, 179)
+            useLightPalette -> Color.rgb(71, 85, 105)
+            else -> Color.argb(210, 203, 213, 225)
+        }
 
-        textPaint.color = primaryColor
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-        canvas.drawText("CarPlay", startX + badgeSize + gap, baseY, textPaint)
+        val timeTypeface = when (style) {
+            GeelyClusterThemeStyle.HERITAGE_GOLD -> Typeface.create(Typeface.SERIF, Typeface.NORMAL)
+            GeelyClusterThemeStyle.RETRO_VFD -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            GeelyClusterThemeStyle.AERO_MECHA -> Typeface.create("sans-serif", Typeface.BOLD_ITALIC)
+            GeelyClusterThemeStyle.NORDIC_GLASS -> Typeface.create("sans-serif-light", Typeface.NORMAL)
+            GeelyClusterThemeStyle.SPORT_CHRONO -> Typeface.create("sans-serif", Typeface.BOLD)
+            else -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+        val dateTypeface = when (style) {
+            GeelyClusterThemeStyle.HERITAGE_GOLD -> Typeface.create(Typeface.SERIF, Typeface.NORMAL)
+            GeelyClusterThemeStyle.RETRO_VFD,
+            GeelyClusterThemeStyle.AERO_MECHA -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            GeelyClusterThemeStyle.NORDIC_GLASS -> Typeface.create("sans-serif-light", Typeface.NORMAL)
+            else -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
 
-        textPaint.color = secondaryColor
-        textPaint.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-        canvas.drawText("Ultra", startX + badgeSize + gap + carPlayW, baseY, textPaint)
+        // Theme-specific subtle framing accents around the center clock
+        if (style == GeelyClusterThemeStyle.AERO_MECHA) {
+            strokePaint.strokeWidth = 2.2f
+            strokePaint.strokeCap = Paint.Cap.ROUND
+            strokePaint.color = withAlpha(accentColor, if (useLightPalette) 145 else 150)
+            canvas.drawLine(centerX - 186f, 266f, centerX - 166f, 266f, strokePaint)
+            canvas.drawLine(centerX - 186f, 266f, centerX - 186f, 452f, strokePaint)
+            canvas.drawLine(centerX - 186f, 452f, centerX - 166f, 452f, strokePaint)
+            canvas.drawLine(centerX + 186f, 266f, centerX + 166f, 266f, strokePaint)
+            canvas.drawLine(centerX + 186f, 266f, centerX + 186f, 452f, strokePaint)
+            canvas.drawLine(centerX + 186f, 452f, centerX + 166f, 452f, strokePaint)
+        } else if (style == GeelyClusterThemeStyle.RETRO_VFD) {
+            strokePaint.strokeWidth = 1.6f
+            strokePaint.color = withAlpha(accentColor, if (useLightPalette) 125 else 95)
+            arcRect.set(centerX - 196f, 254f, centerX + 196f, 464f)
+            canvas.drawRoundRect(arcRect, 14f, 14f, strokePaint)
+        }
+
+        // Large digital clock (`HH:mm`)
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.typeface = timeTypeface
+        textPaint.textSize = if (style == GeelyClusterThemeStyle.RETRO_VFD) 114f else 128f
+        if (style == GeelyClusterThemeStyle.RETRO_VFD && !useLightPalette) {
+            textPaint.color = withAlpha(accentColor, 68)
+            canvas.drawText(timeText, centerX, timeBaseY + 2f, textPaint)
+        }
+        textPaint.color = timeColor
+        canvas.drawText(timeText, centerX, timeBaseY, textPaint)
+
+        // Accent hairline divider between clock and date
+        val divHalf = if (style == GeelyClusterThemeStyle.HERITAGE_GOLD) 118f else 92f
+        strokePaint.strokeWidth = 2.4f
+        strokePaint.strokeCap = Paint.Cap.ROUND
+        strokePaint.color = withAlpha(accentColor, if (useLightPalette) 170 else 185)
+        canvas.drawLine(centerX - divHalf, dividerY, centerX + divHalf, dividerY, strokePaint)
+
+        // Date & weekday (`M月d日  ·  星期X`)
+        textPaint.typeface = dateTypeface
+        textPaint.textSize = if (style == GeelyClusterThemeStyle.RETRO_VFD) 25f else 28f
+        textPaint.color = dateColor
+        canvas.drawText(dateText, centerX, dateBaseY, textPaint)
     }
 
     /** Centered bottom music visualizer & song title pill (fallback to time/fuel when silent). */

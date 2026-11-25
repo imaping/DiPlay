@@ -153,6 +153,7 @@ internal data class GeelySelfDrawConfig(
     val dialColorMode: GeelyDialColorMode = GeelyDialColorMode.DEFAULT,
     val dialThemeStyle: GeelyClusterThemeStyle = GeelyClusterThemeStyle.SPORT_CHRONO,
     val appearanceMode: GeelyClusterAppearanceMode = GeelyClusterAppearanceMode.AUTO,
+    val launchThemeOnStart: Boolean = false,
     val preferredDisplayId: Int = 2,
 ) {
     val hasAnySelfDrawOverlay: Boolean
@@ -181,6 +182,7 @@ internal object GeelyClusterPrefs {
     private const val KEY_DIAL_COLOR_MODE = "self_draw_dial_color_mode"
     private const val KEY_DIAL_THEME_STYLE = "self_draw_dial_theme_style"
     private const val KEY_APPEARANCE_MODE = "self_draw_appearance_mode"
+    private const val KEY_LAUNCH_THEME_ON_START = "self_draw_launch_theme_on_start"
     private const val KEY_DISPLAY_ID = "display_id"
 
     fun prefs(context: Context): SharedPreferences =
@@ -213,6 +215,7 @@ internal object GeelyClusterPrefs {
             dialColorMode = GeelyDialColorMode.fromName(sp.getString(KEY_DIAL_COLOR_MODE, null)),
             dialThemeStyle = GeelyClusterThemeStyle.fromName(sp.getString(KEY_DIAL_THEME_STYLE, null)),
             appearanceMode = GeelyClusterAppearanceMode.fromName(sp.getString(KEY_APPEARANCE_MODE, null)),
+            launchThemeOnStart = sp.getBoolean(KEY_LAUNCH_THEME_ON_START, false),
             preferredDisplayId = sp.getInt(KEY_DISPLAY_ID, 2),
         )
     }
@@ -233,6 +236,7 @@ internal object GeelyClusterPrefs {
             .putString(KEY_DIAL_COLOR_MODE, config.dialColorMode.name)
             .putString(KEY_DIAL_THEME_STYLE, config.dialThemeStyle.name)
             .putString(KEY_APPEARANCE_MODE, config.appearanceMode.name)
+            .putBoolean(KEY_LAUNCH_THEME_ON_START, config.launchThemeOnStart)
             .putInt(KEY_DISPLAY_ID, config.preferredDisplayId)
         writeArea(editor, "hud", config.hudArea.clamp())
         writeArea(editor, "card", config.cardArea.clamp())

@@ -1017,6 +1017,14 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
         }
 
+    var carPlayConnected: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
     var previewMode: Boolean = false
         set(value) {
             if (field != value) {
@@ -1083,6 +1091,20 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         }
     }
 
+    /** Clears CarPlay-only media/navigation state on phone disconnect while keeping dials running. */
+    fun clearCarPlayData() {
+        carPlayConnected = false
+        routeActive = false
+        prevRawArtwork = null
+        prevBlurredArtwork = null
+        rawArtwork = null
+        blurredArtwork = null
+        dominantAlbumColor = null
+        nowPlayingTitle = null
+        nowPlayingActive = false
+        invalidate()
+    }
+
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         updatePollingState()
@@ -1140,6 +1162,9 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         var needsNextFrame = false
         val themeStyle = config.dialThemeStyle
 
+        val hasCarPlayFeed = carPlayConnected || previewMode
+        val effectiveRouteActive = hasCarPlayFeed && routeActive
+
         // Resolve active dial accent color (`DEFAULT` / `SPEED` / `ALBUM`) with 800ms transition
         val targetAccent = when (config.dialColorMode) {
             GeelyDialColorMode.DEFAULT -> themeStyle.defaultAccentColor(nightMode)
@@ -1149,7 +1174,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                 GeelyColorTransition.colorForSpeed(spd)
             }
             GeelyDialColorMode.ALBUM -> {
-                dominantAlbumColor ?: themeStyle.defaultAccentColor(nightMode)
+                (if (hasCarPlayFeed) dominantAlbumColor else null) ?: themeStyle.defaultAccentColor(nightMode)
             }
         }
         val currentAccent = if (previewMode) {
@@ -1164,9 +1189,10 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             colorTransition.colorAt(nowElapsed)
         }
 
-        // 1. Background / Vignette / Standby Backdrop
-        val hasAlbumArt = rawArtwork != null && rawArtwork?.isRecycled == false
-        if (!routeActive && config.albumArtEnabled && hasAlbumArt) {
+        // 1. Background / Vignette / Standby Clock Backdrop
+        val hasAlbumArt = hasCarPlayFeed && rawArtwork != null && rawArtwork?.isRecycled == false
+        var showingCenterClock = false
+        if (!effectiveRouteActive && config.albumArtEnabled && hasAlbumArt) {
             if (drawBlurredAlbumBackground(canvas)) {
                 needsNextFrame = true
             }
@@ -1175,11 +1201,12 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
             drawCenteredAlbumCover(canvas)
         } else {
-            if (config.mapVignetteEnabled || !routeActive) {
-                ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive)
+            if (config.mapVignetteEnabled || !effectiveRouteActive) {
+                ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, effectiveRouteActive)
             }
-            if (!routeActive) {
-                ultraThemeRenderer.drawStandbyWatermark(canvas, themeStyle, nightMode)
+            if (!effectiveRouteActive) {
+                ultraThemeRenderer.drawStandbyWatermark(canvas, themeStyle, nightMode, currentAccent)
+                showingCenterClock = true
             }
         }
 
@@ -1208,7 +1235,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             val rightSave = canvas.save()
             canvas.translate(1312f, 98f)
             canvas.clipRect(0f, 0f, 520f, 520f)
-            val rightArtwork = if (routeActive && config.albumArtEnabled) rawArtwork else null
+            val rightArtwork = if (effectiveRouteActive && config.albumArtEnabled && hasAlbumArt) rawArtwork else null
             val animatingRight = ultraThemeRenderer.drawRightTachDial(
                 canvas = canvas,
                 style = themeStyle,
@@ -1227,17 +1254,21 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
 
         // 4. Bottom status / live lyrics & song bar (`Y: 660..720`) — unified across all themes
         if (config.bottomBarEnabled) {
-            val timeText = timeFormatter.format(Date())
+            val timeText = if (showingCenterClock) "" else timeFormatter.format(Date())
             val avgFuel = sensorSnapshot.avgFuelLPer100Km.valueIfFresh(nowElapsed)
                 ?: if (previewMode) 6.8f else null
             val fuelText = if (avgFuel != null) String.format(Locale.US, "平均油耗 %.1f L/100km", avgFuel) else ""
-            val demoSong = if (previewMode && nowPlayingTitle.isNullOrBlank()) "阿拉斯加海湾" else nowPlayingTitle
+            val activeSong = when {
+                !hasCarPlayFeed -> null
+                previewMode && effectiveRouteActive && nowPlayingTitle.isNullOrBlank() -> "阿拉斯加海湾"
+                else -> nowPlayingTitle
+            }
             if (ultraThemeRenderer.drawUltraBottomMusicBar(
                     canvas = canvas,
                     style = themeStyle,
                     nightMode = nightMode,
-                    songTitle = demoSong?.takeIf { it.isNotBlank() },
-                    isPlaying = !demoSong.isNullOrBlank() && (nowPlayingActive || previewMode),
+                    songTitle = activeSong?.takeIf { it.isNotBlank() },
+                    isPlaying = !activeSong.isNullOrBlank() && (nowPlayingActive || previewMode),
                     accentColor = currentAccent,
                     nowMs = SystemClock.uptimeMillis(),
                     fallbackTime = timeText,

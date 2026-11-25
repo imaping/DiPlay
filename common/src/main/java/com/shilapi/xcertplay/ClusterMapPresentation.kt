@@ -192,7 +192,8 @@ internal class ClusterMapPresentation(
             // and the stock map drives it too, so when the map owns the cluster (the wheel key woke
             // it) switching it off here would take the map off the cluster as well. Read it back
             // first: the last readings decide, and this final one is the freshest evidence.
-            val handBack = projectionWatchdog.shouldHandBack(GeelyClusterProjection.status())
+            val handBack = !GeelyClusterEnhancer.isPersistentThemeActive() &&
+                projectionWatchdog.shouldHandBack(GeelyClusterProjection.status())
             if (handBack) GeelyClusterProjection.set(false, context)
             projectionWatchdog.reset()
         }
