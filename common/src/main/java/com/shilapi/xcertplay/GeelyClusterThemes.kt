@@ -27,6 +27,7 @@ import kotlin.math.sin
  * numerals, fuel progress bar, album art, standby watermark, and bottom song visualizer).
  */
 internal class GeelyUltraThemeRenderer(private val context: Context) {
+    private val extraThemes = GeelyClusterExtraThemesRenderer(context)
     private val leftMainDamped = GeelyDampedFloat(durationMs = 200L)
     private val leftSubDamped = GeelyDampedFloat(durationMs = 700L)
     private val rightMainDamped = GeelyDampedFloat(durationMs = 200L)
@@ -58,12 +59,17 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         accentColor: Int,
         routeActive: Boolean,
     ) {
-        val useLightPalette = style == GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT && !nightMode
+        val useLightPalette = style.supportsLightMode && !nightMode
         if (!routeActive) {
             if (useLightPalette) {
+                val colors = if (style == GeelyClusterThemeStyle.HERITAGE_GOLD) {
+                    intArrayOf(Color.rgb(239, 234, 224), Color.rgb(247, 244, 236), Color.rgb(235, 228, 214))
+                } else {
+                    intArrayOf(Color.rgb(232, 236, 240), Color.rgb(242, 244, 247), Color.rgb(228, 233, 238))
+                }
                 fillPaint.shader = LinearGradient(
                     0f, 0f, 1920f, 720f,
-                    intArrayOf(Color.rgb(232, 236, 240), Color.rgb(242, 244, 247), Color.rgb(228, 233, 238)),
+                    colors,
                     floatArrayOf(0f, 0.5f, 1f),
                     Shader.TileMode.CLAMP,
                 )
@@ -124,7 +130,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         style: GeelyClusterThemeStyle,
         nightMode: Boolean,
     ) {
-        val useLightPalette = style == GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT && !nightMode
+        val useLightPalette = style.supportsLightMode && !nightMode
         val primaryColor = if (useLightPalette) Color.rgb(44, 50, 58) else Color.argb(238, 245, 248, 252)
         val secondaryColor = if (useLightPalette) Color.rgb(92, 102, 114) else Color.argb(200, 218, 226, 236)
 
@@ -175,7 +181,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         fallbackTime: String,
         fallbackFuel: String,
     ): Boolean {
-        val useLightPalette = style == GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT && !nightMode
+        val useLightPalette = style.supportsLightMode && !nightMode
         val title = songTitle?.trim().orEmpty()
         if (title.isEmpty()) {
             textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
@@ -188,8 +194,8 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         }
 
         val textColor = if (useLightPalette) Color.rgb(34, 42, 52) else Color.argb(240, 244, 248, 252)
-        val lineColor = if (useLightPalette) Color.argb(140, 60, 72, 86) else Color.argb(190, 230, 236, 244)
-        val eqColor = if (useLightPalette) Color.rgb(58, 72, 88) else Color.argb(220, 235, 242, 248)
+        val lineColor = if (useLightPalette) Color.argb(140, 60, 72, 86) else withAlpha(accentColor, 165)
+        val eqColor = if (useLightPalette) Color.rgb(58, 72, 88) else withAlpha(accentColor, 235)
 
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textPaint.textSize = 26f
@@ -237,7 +243,8 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         val rawSpeed = sensors.speedKmh.valueIfFresh(nowMs) ?: if (previewDemo) 76f else 0f
         val rawFuel = sensors.fuelPercent.valueIfFresh(nowMs) ?: if (previewDemo) 68f else null
 
-        val speedFrac = (rawSpeed / 180f).coerceIn(0f, 1f)
+        val speedMax = extraThemes.speedMaxFor(style)
+        val speedFrac = (rawSpeed / speedMax).coerceIn(0f, 1f)
         val fuelFrac = ((rawFuel ?: 0f) / 100f).coerceIn(0f, 1f)
         leftMainDamped.updateTarget(speedFrac, nowMs)
         if (rawFuel != null) leftSubDamped.updateTarget(fuelFrac, nowMs)
@@ -245,6 +252,20 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         val curSpeedFrac = leftMainDamped.valueAt(nowMs)
         val curFuelFrac = if (rawFuel != null) leftSubDamped.valueAt(nowMs) else 0f
         val anim = leftMainDamped.isAnimating(nowMs) || (rawFuel != null && leftSubDamped.isAnimating(nowMs))
+
+        if (extraThemes.isExtraTheme(style)) {
+            extraThemes.drawLeftSpeedDial(
+                canvas = canvas,
+                style = style,
+                rawSpeed = rawSpeed,
+                curSpeedFrac = curSpeedFrac,
+                rawFuel = rawFuel,
+                curFuelFrac = curFuelFrac,
+                accentColor = accentColor,
+                nightMode = nightMode,
+            )
+            return anim
+        }
 
         val cx = 260f
         val cy = 260f
@@ -258,8 +279,10 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         // 1. Static SVG dial face (cached Picture)
         val assetPath = speedDialAssetPath(style, nightMode)
         val svgTint = if (style == GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS) effectiveAccent else null
-        GeelyVectorSvgCache.getOrLoad(context, assetPath, 520, 520, tintColor = svgTint)?.let {
-            canvas.drawPicture(it)
+        if (assetPath.isNotEmpty()) {
+            GeelyVectorSvgCache.getOrLoad(context, assetPath, 520, 520, tintColor = svgTint)?.let {
+                canvas.drawPicture(it)
+            }
         }
 
         // 2. Dynamic progress band / arc + scale numerals per theme
@@ -286,7 +309,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
                 drawRadialNumerals(canvas, cx, cy, 178f, (0..180 step 20).map { it.toString() }, 20f, numCol, bold = false)
                 drawFuelTelemetry(canvas, cx, cy, 220f, curFuelFrac, rawFuel, effectiveAccent, lightMode = light)
             }
-            GeelyClusterThemeStyle.FAKE_ULTRA -> Unit
+            else -> Unit
         }
 
         // 3. Giant live speed numeral + km/h
@@ -315,14 +338,29 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         previewDemo: Boolean,
         centerArtwork: Bitmap?,
     ): Boolean {
-        val rawRpm = sensors.rpm.valueIfFresh(nowMs) ?: if (previewDemo) 1290f else 0f
+        val rawRpm = sensors.rpm.valueIfFresh(nowMs) ?: if (previewDemo) 2450f else 0f
         val gearText = sensors.gearIfFresh(nowMs) ?: if (previewDemo) "D" else "P"
 
-        val rpmFrac = (rawRpm / 7000f).coerceIn(0f, 1f)
+        val rpmMax = extraThemes.rpmMaxFor(style)
+        val rpmFrac = (rawRpm / rpmMax).coerceIn(0f, 1f)
         rightMainDamped.updateTarget(rpmFrac, nowMs)
 
         val curRpmFrac = rightMainDamped.valueAt(nowMs)
         val anim = rightMainDamped.isAnimating(nowMs)
+
+        if (extraThemes.isExtraTheme(style)) {
+            extraThemes.drawRightTachDial(
+                canvas = canvas,
+                style = style,
+                rawRpm = rawRpm,
+                curRpmFrac = curRpmFrac,
+                gearText = gearText,
+                accentColor = accentColor,
+                nightMode = nightMode,
+                centerArtwork = centerArtwork,
+            )
+            return anim
+        }
 
         val cx = 260f
         val cy = 260f
@@ -336,8 +374,10 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         // 1. Static SVG dial face (cached Picture)
         val assetPath = tachDialAssetPath(style, nightMode)
         val svgTint = if (style == GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS) effectiveAccent else null
-        GeelyVectorSvgCache.getOrLoad(context, assetPath, 520, 520, tintColor = svgTint)?.let {
-            canvas.drawPicture(it)
+        if (assetPath.isNotEmpty()) {
+            GeelyVectorSvgCache.getOrLoad(context, assetPath, 520, 520, tintColor = svgTint)?.let {
+                canvas.drawPicture(it)
+            }
         }
 
         // 2. Dynamic progress band / arc + scale numerals per theme
@@ -375,7 +415,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
                     bold = false, redFromIndex = 6,
                 )
             }
-            GeelyClusterThemeStyle.FAKE_ULTRA -> Unit
+            else -> Unit
         }
 
         // 3. Bottom live RPM label
@@ -417,7 +457,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         } else {
             "cluster-visual/themes/clean-light/speed_day.svg"
         }
-        GeelyClusterThemeStyle.FAKE_ULTRA -> "cluster-visual/themes/fake-ultra/dark.svg"
+        else -> ""
     }
 
     private fun tachDialAssetPath(style: GeelyClusterThemeStyle, nightMode: Boolean): String = when (style) {
@@ -428,7 +468,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         } else {
             "cluster-visual/themes/clean-light/tach_day.svg"
         }
-        GeelyClusterThemeStyle.FAKE_ULTRA -> "cluster-visual/themes/fake-ultra/dark.svg"
+        else -> ""
     }
 
     private fun drawClassicSweepBand(

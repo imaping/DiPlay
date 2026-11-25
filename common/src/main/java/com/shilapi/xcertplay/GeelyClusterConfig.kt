@@ -34,28 +34,73 @@ internal enum class GeelyClusterAppearanceMode(
 
 internal enum class GeelyClusterThemeStyle(
     val displayName: String,
+    val shortLabel: String,
     val description: String,
+    val supportsLightMode: Boolean = false,
 ) {
-    FAKE_ULTRA(
-        displayName = "Fake Ultra 机械矢量",
-        description = "经典深色矢量双圆盘（0..240 km/h · 0..8k 转速 · 扫描光环）",
+    SPORT_CHRONO(
+        displayName = "赛道计时 · 运动指针",
+        shortLabel = "赛道计时",
+        description = "保时捷运动指针 + 顶部 9 颗动态换挡灯珠 + 碳纤维表底（支持昼夜）",
+        supportsLightMode = true,
+    ),
+    HERITAGE_GOLD(
+        displayName = "典藏鎏金 · 奢华机械",
+        shortLabel = "典藏鎏金",
+        description = "瑞士铁轨刻度 + 立体剑形指针 + 夜间墨玉金 / 日间象牙陶瓷盘",
+        supportsLightMode = true,
+    ),
+    AERO_MECHA(
+        displayName = "机甲光翼 · 未来战术",
+        shortLabel = "机甲光翼",
+        description = "战术切角双翼外框 + 28 格独立发光 LED 能量块 + 斜体数字",
+        supportsLightMode = false,
+    ),
+    NORDIC_GLASS(
+        displayName = "北欧冰川 · 液态玻璃",
+        shortLabel = "北欧冰川",
+        description = "通透冰霜玻璃环 + 镜面高光边 + 悬浮流光圆点（支持昼夜）",
+        supportsLightMode = true,
+    ),
+    RETRO_VFD(
+        displayName = "复古微光 · 荧光液晶",
+        shortLabel = "复古微光",
+        description = "80s VFD 荧光微点阵底 + 36 枚阶梯荧光柱 + 格栅复古油量条",
+        supportsLightMode = false,
     ),
     ULTRA_CLASSIC_TICKS(
         displayName = "Ultra 精密刻度",
+        shortLabel = "精密刻度",
         description = "双圈精密长短刻度 + 扇区光带 + 右盘档位/RPM + 专辑氛围底",
+        supportsLightMode = false,
     ),
     ULTRA_MINIMAL_RING(
         displayName = "Ultra 极简光环",
+        shortLabel = "极简光环",
         description = "无数字磨砂厚光环 + 流畅主题色弧 + 极简档位与底部油量弧",
+        supportsLightMode = false,
     ),
     ULTRA_CLEAN_LIGHT(
         displayName = "Ultra 现代点刻（自适应昼夜）",
+        shortLabel = "现代点刻",
         description = "日间陶瓷浅银 / 夜间深石墨 + 圆点刻度 + 圆角进度弧 + 右盘方角封面",
+        supportsLightMode = true,
     );
+
+    fun defaultAccentColor(nightMode: Boolean): Int = when (this) {
+        SPORT_CHRONO -> if (nightMode) 0xFFFF3B30.toInt() else 0xFFD92D20.toInt()
+        HERITAGE_GOLD -> if (nightMode) 0xFFDEB973.toInt() else 0xFF8F6A2E.toInt()
+        AERO_MECHA -> 0xFF00E5FF.toInt()
+        NORDIC_GLASS -> if (nightMode) 0xFF38BDF8.toInt() else 0xFF0369A1.toInt()
+        RETRO_VFD -> 0xFF2EE6A6.toInt()
+        ULTRA_CLASSIC_TICKS,
+        ULTRA_MINIMAL_RING,
+        ULTRA_CLEAN_LIGHT -> GeelyColorTransition.DEFAULT_CYAN
+    }
 
     companion object {
         fun fromName(raw: String?): GeelyClusterThemeStyle =
-            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: FAKE_ULTRA
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: SPORT_CHRONO
     }
 }
 
@@ -106,7 +151,7 @@ internal data class GeelySelfDrawConfig(
     val albumArtEnabled: Boolean = true,
     val bottomBarEnabled: Boolean = true,
     val dialColorMode: GeelyDialColorMode = GeelyDialColorMode.DEFAULT,
-    val dialThemeStyle: GeelyClusterThemeStyle = GeelyClusterThemeStyle.FAKE_ULTRA,
+    val dialThemeStyle: GeelyClusterThemeStyle = GeelyClusterThemeStyle.SPORT_CHRONO,
     val appearanceMode: GeelyClusterAppearanceMode = GeelyClusterAppearanceMode.AUTO,
     val preferredDisplayId: Int = 2,
 ) {

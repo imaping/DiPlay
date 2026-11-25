@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 520" width="520" height="520">
+  <defs>
+    <radialGradient id="glassBg" cx="260" cy="180" r="236" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.86"/>
+      <stop offset="74%" stop-color="#F1F5F9" stop-opacity="0.78"/>
+      <stop offset="100%" stop-color="#E2E8F0" stop-opacity="0.58"/>
+    </radialGradient>
+    <linearGradient id="glassRim" x1="260" y1="26" x2="260" y2="494" gradientUnits="userSpaceOnUse" data-fixed-color="true">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.98"/>
+      <stop offset="34%" stop-color="#94A3B8" stop-opacity="0.28"/>
+      <stop offset="84%" stop-color="#94A3B8" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.75"/>
+    </linearGradient>
+  </defs>
+  <circle cx="260" cy="260" r="234" fill="url(#glassBg)" data-fixed-color="true"/>
+  <circle cx="260" cy="260" r="233" fill="none" stroke="url(#glassRim)" stroke-width="2.4" data-fixed-color="true"/>
+  <path d="M 117.16 402.84 A 202.00 202.00 0 1 1 402.84 402.84" fill="none" stroke="#0F172A" stroke-opacity="0.086" stroke-width="28" stroke-linecap="round" data-fixed-color="true"/>
+  <path d="M 136.96 383.04 A 174.00 174.00 0 1 1 383.04 383.04" fill="none" stroke="#0F172A" stroke-opacity="0.125" stroke-width="1.2" stroke-linecap="round" data-fixed-color="true"/>
+</svg>
+

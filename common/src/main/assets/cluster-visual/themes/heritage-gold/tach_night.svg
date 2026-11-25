@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 520" width="520" height="520">
+  <defs>
+    <radialGradient id="dialBg" cx="260" cy="260" r="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#131D1B" stop-opacity="1"/>
+      <stop offset="72%" stop-color="#0B1211" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#070B0B" stop-opacity="1"/>
+    </radialGradient>
+  </defs>
+  <circle cx="260" cy="260" r="238" fill="url(#dialBg)" data-fixed-color="true"/>
+  <circle cx="260" cy="260" r="132" fill="none" stroke="#DEB973" stroke-opacity="0.12" stroke-width="1" data-replace-tint="true"/>
+  <circle cx="260" cy="260" r="138" fill="none" stroke="#DEB973" stroke-opacity="0.12" stroke-width="1" data-replace-tint="true"/>
+  <circle cx="260" cy="260" r="144" fill="none" stroke="#DEB973" stroke-opacity="0.12" stroke-width="1" data-replace-tint="true"/>
+  <circle cx="260" cy="260" r="150" fill="none" stroke="#DEB973" stroke-opacity="0.12" stroke-width="1" data-replace-tint="true"/>
+  <circle cx="260" cy="260" r="156" fill="none" stroke="#DEB973" stroke-opacity="0.12" stroke-width="1" data-replace-tint="true"/>
+  <circle cx="260" cy="260" r="235" fill="none" stroke="#DEB973" stroke-opacity="0.75" stroke-width="2.4" data-replace-tint="true"/>
+  <path d="M 102.32 417.68 A 223.00 223.00 0 1 1 417.68 417.68" fill="none" stroke="#DEB973" stroke-opacity="0.45" stroke-width="1.4" data-replace-tint="true"/>
+  <path d="M 110.80 409.20 A 211.00 211.00 0 1 1 409.20 409.20" fill="none" stroke="#DEB973" stroke-opacity="0.45" stroke-width="1.4" data-replace-tint="true"/>
+  <g id="railway-ticks">
+    <line x1="115.75" y1="404.25" x2="102.32" y2="417.68" stroke="#DEB973" stroke-opacity="1" stroke-width="2.6" data-replace-tint="true"/>
+    <line x1="92.12" y1="387.82" x2="82.58" y2="395.09" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="76.48" y1="364.13" x2="66.05" y2="370.05" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="64.17" y1="338.55" x2="53.03" y2="343.02" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="55.40" y1="311.56" x2="43.76" y2="314.49" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="57.28" y1="282.84" x2="38.40" y2="284.97" stroke="#DEB973" stroke-opacity="1" stroke-width="2.6" data-replace-tint="true"/>
+    <line x1="49.05" y1="255.27" x2="37.06" y2="255.00" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="51.60" y1="226.99" x2="39.75" y2="225.12" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="57.91" y1="199.32" x2="46.42" y2="195.87" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="67.89" y1="172.74" x2="56.96" y2="167.78" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="87.27" y1="151.47" x2="71.18" y2="141.36" stroke="#DEB973" stroke-opacity="1" stroke-width="2.6" data-replace-tint="true"/>
+    <line x1="98.03" y1="124.78" x2="88.82" y2="117.08" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="117.64" y1="104.26" x2="109.55" y2="95.40" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="139.84" y1="86.56" x2="133.00" y2="76.69" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="164.21" y1="72.00" x2="158.76" y2="61.31" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="192.62" y1="67.45" x2="186.35" y2="49.51" stroke="#DEB973" stroke-opacity="1" stroke-width="2.6" data-replace-tint="true"/>
+    <line x1="217.68" y1="53.29" x2="215.27" y2="41.53" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="245.81" y1="49.48" x2="245.00" y2="37.51" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="274.19" y1="49.48" x2="275.00" y2="37.51" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="302.32" y1="53.29" x2="304.73" y2="41.53" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="327.38" y1="67.45" x2="333.65" y2="49.51" stroke="#DEB973" stroke-opacity="1" stroke-width="2.6" data-replace-tint="true"/>
+    <line x1="355.79" y1="72.00" x2="361.24" y2="61.31" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="380.16" y1="86.56" x2="387.00" y2="76.69" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="402.36" y1="104.26" x2="410.45" y2="95.40" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="421.97" y1="124.78" x2="431.18" y2="117.08" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="432.73" y1="151.47" x2="448.82" y2="141.36" stroke="#DEB973" stroke-opacity="1" stroke-width="2.6" data-replace-tint="true"/>
+    <line x1="452.11" y1="172.74" x2="463.04" y2="167.78" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="462.09" y1="199.32" x2="473.58" y2="195.87" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="468.40" y1="226.99" x2="480.25" y2="225.12" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="470.95" y1="255.27" x2="482.94" y2="255.00" stroke="#DEB973" stroke-opacity="0.42" stroke-width="1.2" data-replace-tint="true"/>
+    <line x1="462.72" y1="282.84" x2="481.60" y2="284.97" stroke="#C84B31" stroke-opacity="1" stroke-width="2.6" data-fixed-color="true"/>
+    <line x1="464.60" y1="311.56" x2="476.24" y2="314.49" stroke="#C84B31" stroke-opacity="1" stroke-width="1.2" data-fixed-color="true"/>
+    <line x1="455.83" y1="338.55" x2="466.97" y2="343.02" stroke="#C84B31" stroke-opacity="1" stroke-width="1.2" data-fixed-color="true"/>
+    <line x1="443.52" y1="364.13" x2="453.95" y2="370.05" stroke="#C84B31" stroke-opacity="1" stroke-width="1.2" data-fixed-color="true"/>
+    <line x1="427.88" y1="387.82" x2="437.42" y2="395.09" stroke="#C84B31" stroke-opacity="1" stroke-width="1.2" data-fixed-color="true"/>
+    <line x1="404.25" y1="404.25" x2="417.68" y2="417.68" stroke="#C84B31" stroke-opacity="1" stroke-width="2.6" data-fixed-color="true"/>
+  </g>
+</svg>
+

@@ -854,7 +854,7 @@ private class GeelyClusterSettingsPanel(
     }
 
     private fun buildDialTab(container: LinearLayout) {
-        addSectionTitle(container, "仪表盘主题样式（4 套风格 · 实时切换）")
+        addSectionTitle(container, "仪表盘主题样式（${GeelyClusterThemeStyle.entries.size} 套风格 · 实时切换）")
         for (style in GeelyClusterThemeStyle.entries) {
             val selected = config.dialThemeStyle == style
             val card = LinearLayout(activity).apply {
@@ -1097,31 +1097,28 @@ private class GeelyClusterSettingsPanel(
             },
         )
 
-        val themeRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, dp(8))
-        }
-        val shortLabels = mapOf(
-            GeelyClusterThemeStyle.FAKE_ULTRA to "机械矢量",
-            GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS to "精密刻度",
-            GeelyClusterThemeStyle.ULTRA_MINIMAL_RING to "极简光环",
-            GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT to "现代点刻",
-        )
-        for ((idx, style) in GeelyClusterThemeStyle.entries.withIndex()) {
-            val active = config.dialThemeStyle == style
-            val btn = createActionButton(shortLabels[style] ?: style.displayName, selected = active) {
-                config = config.copy(dialThemeStyle = style)
-                onConfigUpdated()
-                rebuildTabContent()
+        val styleRows = GeelyClusterThemeStyle.entries.chunked(4)
+        for ((rowIdx, rowStyles) in styleRows.withIndex()) {
+            val themeRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, 0, 0, if (rowIdx == styleRows.lastIndex) dp(8) else dp(6))
             }
-            themeRow.addView(
-                btn,
-                LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                    if (idx > 0) leftMargin = dp(6)
-                },
-            )
+            for ((idx, style) in rowStyles.withIndex()) {
+                val active = config.dialThemeStyle == style
+                val btn = createActionButton(style.shortLabel, selected = active) {
+                    config = config.copy(dialThemeStyle = style)
+                    onConfigUpdated()
+                    rebuildTabContent()
+                }
+                themeRow.addView(
+                    btn,
+                    LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+                        if (idx > 0) leftMargin = dp(6)
+                    },
+                )
+            }
+            container.addView(themeRow)
         }
-        container.addView(themeRow)
 
         val quickRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL

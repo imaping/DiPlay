@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -14,7 +15,6 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.SweepGradient
-import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.View
 import org.w3c.dom.Element
@@ -34,12 +34,10 @@ import kotlin.math.acos
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
-import kotlin.math.tan
 
 /**
  * Full SVG Path string parser supporting M/m, L/l, H/h, V/v, C/c, S/s, Q/q, T/t, A/a, Z/z
@@ -482,8 +480,9 @@ internal object GeelyVectorSvgCache {
                 "linearGradient" -> {
                     val id = el.getAttribute("id")
                     if (id.isNotEmpty()) {
-                        val sweepAttr = sweepAngleDeg
-                            ?: el.getAttribute("data-sweep-angle").toFloatOrNull()
+                        val sweepAttrRaw = el.getAttribute("data-sweep-angle").trim()
+                        val useSweep = sweepAngleDeg != null || sweepAttrRaw.isNotEmpty()
+                        val fixedGradient = el.getAttribute("data-fixed-color").equals("true", ignoreCase = true)
                         val stops = ArrayList<Pair<Float, Int>>()
                         val children = el.childNodes
                         for (j in 0 until children.length) {
@@ -493,7 +492,12 @@ internal object GeelyVectorSvgCache {
                                     val v = raw.toFloatOrNull() ?: 0f
                                     if (c.getAttribute("offset").endsWith("%")) v / 100f else v
                                 }.coerceIn(0f, 1f)
-                                val baseColor = tintColor ?: parseColor(c.getAttribute("stop-color")) ?: Color.WHITE
+                                val parsedStop = parseColor(c.getAttribute("stop-color")) ?: Color.WHITE
+                                val baseColor = if (useSweep && !fixedGradient && tintColor != null) {
+                                    tintColor
+                                } else {
+                                    parsedStop
+                                }
                                 val opacity = c.getAttribute("stop-opacity").toFloatOrNull()?.coerceIn(0f, 1f) ?: 1f
                                 val alpha = (Color.alpha(baseColor) * opacity).roundToInt().coerceIn(0, 255)
                                 val color = Color.argb(alpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor))
@@ -501,22 +505,31 @@ internal object GeelyVectorSvgCache {
                             }
                         }
                         if (stops.size >= 2) {
-                            val sweepSpan = (sweepAttr ?: 45f).coerceIn(8f, 270f)
-                            val spanFraction = (sweepSpan / 360f).coerceIn(0.02f, 0.95f)
-                            val colors = IntArray(stops.size + 1)
-                            val positions = FloatArray(stops.size + 1)
-                            for (k in stops.indices) {
-                                positions[k] = (stops[k].first * spanFraction).coerceIn(0f, 1f)
-                                colors[k] = stops[k].second
+                            if (useSweep) {
+                                val sweepSpan = (sweepAngleDeg ?: sweepAttrRaw.toFloatOrNull() ?: 45f).coerceIn(8f, 270f)
+                                val spanFraction = (sweepSpan / 360f).coerceIn(0.02f, 0.95f)
+                                val colors = IntArray(stops.size + 1)
+                                val positions = FloatArray(stops.size + 1)
+                                for (k in stops.indices) {
+                                    positions[k] = (stops[k].first * spanFraction).coerceIn(0f, 1f)
+                                    colors[k] = stops[k].second
+                                }
+                                positions[stops.size] = 1f
+                                colors[stops.size] = Color.TRANSPARENT
+                                val shader = SweepGradient(vbWidth / 2f, vbHeight / 2f, colors, positions)
+                                val matrix = Matrix()
+                                matrix.postRotate(135f, vbWidth / 2f, vbHeight / 2f)
+                                shader.setLocalMatrix(matrix)
+                                gradients[id] = shader
+                            } else {
+                                val x1 = parseCoord(el.getAttribute("x1"), vbWidth, 0f)
+                                val y1 = parseCoord(el.getAttribute("y1"), vbHeight, 0f)
+                                val x2 = parseCoord(el.getAttribute("x2"), vbWidth, vbWidth)
+                                val y2 = parseCoord(el.getAttribute("y2"), vbHeight, 0f)
+                                val colors = IntArray(stops.size) { k -> stops[k].second }
+                                val positions = FloatArray(stops.size) { k -> stops[k].first }
+                                gradients[id] = LinearGradient(x1, y1, x2, y2, colors, positions, Shader.TileMode.CLAMP)
                             }
-                            positions[stops.size] = 1f
-                            colors[stops.size] = Color.TRANSPARENT
-                            val shader = SweepGradient(vbWidth / 2f, vbHeight / 2f, colors, positions)
-                            val matrix = Matrix()
-                            // Align the trailing edge of the sweep gradient with the dial start (135 deg)
-                            matrix.postRotate(135f, vbWidth / 2f, vbHeight / 2f)
-                            shader.setLocalMatrix(matrix)
-                            gradients[id] = shader
                         }
                     }
                 }
@@ -703,24 +716,58 @@ internal object GeelyVectorSvgCache {
         }
 
         if (strokeRaw.isNotEmpty() && strokeRaw != "none") {
-            val parsed = parseColor(strokeRaw)
-            if (parsed != null) {
-                val tinted = when {
-                    effectiveTint == null -> parsed
-                    replaceTint -> effectiveTint
-                    else -> applyTint(parsed, effectiveTint)
+            val dashRaw = (styleMap["stroke-dasharray"] ?: el.getAttribute("stroke-dasharray")).trim()
+            val dashOffset = (styleMap["stroke-dashoffset"] ?: el.getAttribute("stroke-dashoffset"))
+                .removeSuffix("px").trim().toFloatOrNull() ?: 0f
+            val dashEffect = parseDashArray(dashRaw, dashOffset)
+            val strokeUrlId = extractUrlId(strokeRaw)
+            if (strokeUrlId != null) {
+                val shader = gradients[strokeUrlId]
+                if (shader != null) {
+                    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        this.strokeWidth = strokeWidth
+                        this.strokeCap = strokeCap
+                        this.shader = shader
+                        alpha = (strokeOpacity * 255f).roundToInt().coerceIn(0, 255)
+                        if (dashEffect != null) pathEffect = dashEffect
+                    }
+                    canvas.drawPath(path, paint)
                 }
-                val alpha = (Color.alpha(tinted) * strokeOpacity).roundToInt().coerceIn(0, 255)
-                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    style = Paint.Style.STROKE
-                    this.strokeWidth = strokeWidth
-                    this.strokeCap = strokeCap
-                    color = Color.argb(alpha, Color.red(tinted), Color.green(tinted), Color.blue(tinted))
+            } else {
+                val parsed = parseColor(strokeRaw)
+                if (parsed != null) {
+                    val tinted = when {
+                        effectiveTint == null -> parsed
+                        replaceTint -> effectiveTint
+                        else -> applyTint(parsed, effectiveTint)
+                    }
+                    val alpha = (Color.alpha(tinted) * strokeOpacity).roundToInt().coerceIn(0, 255)
+                    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        this.strokeWidth = strokeWidth
+                        this.strokeCap = strokeCap
+                        color = Color.argb(alpha, Color.red(tinted), Color.green(tinted), Color.blue(tinted))
+                        if (dashEffect != null) pathEffect = dashEffect
+                    }
+                    canvas.drawPath(path, paint)
                 }
-                canvas.drawPath(path, paint)
             }
         }
         canvas.restoreToCount(saveCount)
+    }
+
+    private fun parseDashArray(raw: String, offset: Float): DashPathEffect? {
+        if (raw.isEmpty() || raw.equals("none", ignoreCase = true)) return null
+        val nums = raw.split(Regex("[\\s,]+")).mapNotNull { it.removeSuffix("px").toFloatOrNull() }
+            .filter { it >= 0f }
+        if (nums.isEmpty() || nums.all { it == 0f }) return null
+        val intervals = if (nums.size % 2 == 1) {
+            FloatArray(nums.size * 2) { idx -> nums[idx % nums.size] }
+        } else {
+            nums.toFloatArray()
+        }
+        return DashPathEffect(intervals, offset)
     }
 
     private fun parseCoord(raw: String, refSize: Float, fallback: Float): Float {
@@ -942,405 +989,9 @@ internal class GeelyColorTransition(private val durationMs: Long = 800L) {
     }
 }
 
-internal data class GeelyDialPalette(
-    val accentColor: Int,
-    val primaryTextColor: Int,
-    val secondaryTextColor: Int,
-    val cardFillColor: Int,
-    val ringStrokeColor: Int,
-    val needleGlowColor: Int,
-) {
-    companion object {
-        fun fromAccent(accent: Int, nightMode: Boolean): GeelyDialPalette {
-            val r = Color.red(accent)
-            val g = Color.green(accent)
-            val b = Color.blue(accent)
-            return if (nightMode) {
-                GeelyDialPalette(
-                    accentColor = accent,
-                    primaryTextColor = Color.WHITE,
-                    secondaryTextColor = Color.argb(190, 210, 228, 225),
-                    cardFillColor = Color.argb(185, 8, 16, 18),
-                    ringStrokeColor = Color.argb(150, r, g, b),
-                    needleGlowColor = Color.argb(95, r, g, b),
-                )
-            } else {
-                GeelyDialPalette(
-                    accentColor = accent,
-                    primaryTextColor = Color.WHITE,
-                    secondaryTextColor = Color.argb(215, 225, 238, 236),
-                    cardFillColor = Color.argb(195, 14, 24, 28),
-                    ringStrokeColor = Color.argb(175, r, g, b),
-                    needleGlowColor = Color.argb(110, r, g, b),
-                )
-            }
-        }
-    }
-}
-
-internal enum class GeelyDialSpec(
-    val title: String,
-    val unit: String,
-    val minValue: Float,
-    val maxValue: Float,
-    val scaleLabels: List<String>,
-    val subIconAsset: String,
-    val subMin: Float,
-    val subMax: Float,
-    val subLeftLabel: String,
-    val subRightLabel: String,
-) {
-    SPEED(
-        title = "车速",
-        unit = "km/h",
-        minValue = 0f,
-        maxValue = 240f,
-        scaleLabels = listOf("0", "20", "40", "60", "80", "100", "120", "140", "160", "180", "200", "220", "240"),
-        subIconAsset = "cluster-visual/themes/fake-ultra/fuel.svg",
-        subMin = 0f,
-        subMax = 100f,
-        subLeftLabel = "E",
-        subRightLabel = "F",
-    ),
-    TACHOMETER(
-        title = "转速",
-        unit = "×1000rpm",
-        minValue = 0f,
-        maxValue = 8000f,
-        scaleLabels = listOf("0", "1", "2", "3", "4", "5", "6", "7", "8"),
-        subIconAsset = "",
-        subMin = 0f,
-        subMax = 100f,
-        subLeftLabel = "",
-        subRightLabel = "",
-    ),
-}
-
-/** Single Fake Ultra 520x520 vector dial renderer matching `Lma0;`. */
-internal class GeelySingleDialRenderer(private val context: Context) {
-    val mainDamped = GeelyDampedFloat(durationMs = 200L)
-    val subDamped = GeelyDampedFloat(durationMs = 700L)
-    var centerArtwork: Bitmap? = null
-
-    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
-    private val needlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-    }
-    private val scaleTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER
-        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        textSize = 20f
-    }
-    private val valueTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER
-        typeface = Typeface.create("sans-serif", Typeface.BOLD)
-    }
-    private val unitTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-    }
-    private val subTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER
-        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-        textSize = 18f
-    }
-    private val artworkClipPath = Path()
-    private val needlePath = Path()
-    private val arcOval = RectF()
-
-    fun reset() {
-        mainDamped.reset()
-        subDamped.reset()
-    }
-
-    fun draw(
-        canvas: Canvas,
-        spec: GeelyDialSpec,
-        sensors: GeelyClusterSensorSnapshot,
-        palette: GeelyDialPalette,
-        nowMs: Long,
-        previewDemo: Boolean = false,
-    ): Boolean {
-        val rawMain: Float? = when (spec) {
-            GeelyDialSpec.SPEED -> sensors.speedKmh.valueIfFresh(nowMs) ?: if (previewDemo) 76f else 0f
-            GeelyDialSpec.TACHOMETER -> sensors.rpm.valueIfFresh(nowMs) ?: if (previewDemo) 2300f else null
-        }
-        val rawSub: Float? = when (spec) {
-            GeelyDialSpec.SPEED -> sensors.fuelPercent.valueIfFresh(nowMs) ?: if (previewDemo) 68f else null
-            GeelyDialSpec.TACHOMETER -> null
-        }
-
-        val mainFraction = if (rawMain != null) {
-            ((rawMain - spec.minValue) / (spec.maxValue - spec.minValue)).coerceIn(0f, 1f)
-        } else {
-            0f
-        }
-        val subFraction = if (rawSub != null) {
-            ((rawSub - spec.subMin) / (spec.subMax - spec.subMin)).coerceIn(0f, 1f)
-        } else {
-            0f
-        }
-
-        mainDamped.updateTarget(mainFraction, nowMs)
-        subDamped.updateTarget(subFraction, nowMs)
-
-        val curMainFraction = mainDamped.valueAt(nowMs)
-        val curSubFraction = subDamped.valueAt(nowMs)
-
-        // 1. Soft dark circular backing so the dial is legible over bright map tiles
-        val cx = DIAL_SIZE / 2f
-        val cy = DIAL_SIZE / 2f
-        bgPaint.shader = RadialGradient(
-            cx,
-            cy,
-            252f,
-            intArrayOf(
-                palette.cardFillColor,
-                palette.cardFillColor,
-                Color.argb(90, 6, 12, 14),
-                Color.TRANSPARENT,
-            ),
-            floatArrayOf(0f, 0.76f, 0.93f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-        canvas.drawCircle(cx, cy, 252f, bgPaint)
-        bgPaint.shader = null
-
-        // 2. Base vector instrument ring (`dark.svg`)
-        val darkPicture = GeelyVectorSvgCache.getOrLoad(
-            context = context,
-            assetPath = "cluster-visual/themes/fake-ultra/dark.svg",
-            widthPx = 520,
-            heightPx = 520,
-            tintColor = palette.accentColor,
-        )
-        if (darkPicture != null) {
-            canvas.drawPicture(darkPicture)
-        }
-
-        // 3. Highlighted swept vector instrument ring (`highlight.svg`) clipped to current needle sweep
-        val sweepDeg = (curMainFraction * 270f).coerceIn(0f, 270f)
-        if (sweepDeg > 1.5f) {
-            val highlightPicture = GeelyVectorSvgCache.getOrLoad(
-                context = context,
-                assetPath = "cluster-visual/themes/fake-ultra/highlight.svg",
-                widthPx = 520,
-                heightPx = 520,
-                tintColor = palette.accentColor,
-                sweepAngleDeg = sweepDeg,
-            )
-            if (highlightPicture != null) {
-                val save = canvas.save()
-                val clipArcPath = Path().apply {
-                    moveTo(cx, cy)
-                    arcOval.set(0f, 0f, DIAL_SIZE, DIAL_SIZE)
-                    arcTo(arcOval, 135f, sweepDeg)
-                    close()
-                }
-                canvas.clipPath(clipArcPath)
-                canvas.drawPicture(highlightPicture)
-                canvas.restoreToCount(save)
-            }
-        }
-
-        // 4. Scale numbers around the inner ring
-        drawScaleLabels(canvas, spec, curMainFraction, palette)
-
-        // 5. Optional circular album artwork inside the right dial center when navigation is active
-        val art = centerArtwork
-        if (art != null && !art.isRecycled) {
-            val save = canvas.save()
-            artworkClipPath.reset()
-            artworkClipPath.addCircle(cx, cy, 134f, Path.Direction.CW)
-            canvas.clipPath(artworkClipPath)
-            val dst = RectF(cx - 134f, cy - 134f, cx + 134f, cy + 134f)
-            canvas.drawBitmap(art, null, dst, null)
-            bgPaint.color = Color.argb(122, 4, 10, 12)
-            canvas.drawCircle(cx, cy, 134f, bgPaint)
-            canvas.restoreToCount(save)
-
-            arcPaint.strokeWidth = 2.5f
-            arcPaint.color = palette.ringStrokeColor
-            canvas.drawCircle(cx, cy, 134f, arcPaint)
-        }
-
-        // 6. Main damped needle + glowing leading edge
-        drawNeedle(canvas, cx, cy, 135f + sweepDeg, palette)
-
-        // 7. Center digital readout
-        drawCenterReadout(canvas, cx, cy, spec, rawMain, palette)
-
-        // 8. Bottom sub-gauge (Fuel % on left dial only; factory cluster already displays coolant bar)
-        if (spec == GeelyDialSpec.SPEED) {
-            drawSubGauge(canvas, cx, cy, spec, rawSub, curSubFraction, palette)
-        }
-
-        return mainDamped.isAnimating(nowMs) || subDamped.isAnimating(nowMs)
-    }
-
-    private fun drawScaleLabels(
-        canvas: Canvas,
-        spec: GeelyDialSpec,
-        mainFraction: Float,
-        palette: GeelyDialPalette,
-    ) {
-        val labels = spec.scaleLabels
-        val count = labels.size
-        if (count < 2) return
-        val cx = DIAL_SIZE / 2f
-        val cy = DIAL_SIZE / 2f
-        val labelRadius = 178f
-
-        for (i in 0 until count) {
-            val frac = i.toFloat() / (count - 1).toFloat()
-            val angleDeg = 135f + frac * 270f
-            val rad = Math.toRadians(angleDeg.toDouble())
-            val lx = cx + (cos(rad) * labelRadius).toFloat()
-            val ly = cy + (sin(rad) * labelRadius).toFloat() + 7f
-            val active = frac <= mainFraction + 0.01f
-            scaleTextPaint.color = if (active) palette.primaryTextColor else palette.secondaryTextColor
-            scaleTextPaint.alpha = if (active) 245 else 150
-            canvas.drawText(labels[i], lx, ly, scaleTextPaint)
-        }
-    }
-
-    private fun drawNeedle(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        angleDeg: Float,
-        palette: GeelyDialPalette,
-    ) {
-        val save = canvas.save()
-        canvas.rotate(angleDeg, cx, cy)
-        // Outer glow
-        needlePath.reset()
-        needlePath.moveTo(cx + 124f, cy - 4.5f)
-        needlePath.lineTo(cx + 224f, cy - 1.5f)
-        needlePath.lineTo(cx + 224f, cy + 1.5f)
-        needlePath.lineTo(cx + 124f, cy + 4.5f)
-        needlePath.close()
-        needlePaint.color = palette.needleGlowColor
-        canvas.drawPath(needlePath, needlePaint)
-
-        // Crisp core needle
-        needlePath.reset()
-        needlePath.moveTo(cx + 128f, cy - 2.2f)
-        needlePath.lineTo(cx + 223f, cy - 0.9f)
-        needlePath.lineTo(cx + 223f, cy + 0.9f)
-        needlePath.lineTo(cx + 128f, cy + 2.2f)
-        needlePath.close()
-        needlePaint.color = Color.WHITE
-        canvas.drawPath(needlePath, needlePaint)
-        canvas.restoreToCount(save)
-    }
-
-    private fun drawCenterReadout(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        spec: GeelyDialSpec,
-        rawMain: Float?,
-        palette: GeelyDialPalette,
-    ) {
-        val mainText = when (spec) {
-            GeelyDialSpec.SPEED -> {
-                val spd = (rawMain ?: 0f).coerceAtLeast(0f).roundToInt()
-                spd.toString()
-            }
-            GeelyDialSpec.TACHOMETER -> {
-                if (rawMain != null && rawMain.isFinite()) {
-                    String.format(Locale.US, "%.1f", (rawMain / 1000f).coerceAtLeast(0f))
-                } else {
-                    "--"
-                }
-            }
-        }
-        valueTextPaint.color = palette.primaryTextColor
-        valueTextPaint.textSize = if (spec == GeelyDialSpec.SPEED) 94f else 84f
-        valueTextPaint.setShadowLayer(10f, 0f, 2f, Color.argb(140, 0, 0, 0))
-        canvas.drawText(mainText, cx, cy + 24f, valueTextPaint)
-
-        unitTextPaint.color = palette.secondaryTextColor
-        unitTextPaint.textSize = 21f
-        canvas.drawText(spec.unit, cx, cy + 66f, unitTextPaint)
-    }
-
-    private fun drawSubGauge(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        spec: GeelyDialSpec,
-        rawSub: Float?,
-        subFraction: Float,
-        palette: GeelyDialPalette,
-    ) {
-        val radius = 218f
-        arcOval.set(cx - radius, cy - radius, cx + radius, cy + radius)
-
-        // Track arc (bottom opening from 122 deg to 58 deg)
-        arcPaint.strokeWidth = 7f
-        arcPaint.color = Color.argb(80, 120, 145, 142)
-        canvas.drawArc(arcOval, 58f, 64f, false, arcPaint)
-
-        // Active sub-gauge bar
-        val isWarning = when (spec) {
-            GeelyDialSpec.SPEED -> rawSub != null && rawSub < 15f
-            GeelyDialSpec.TACHOMETER -> rawSub != null && rawSub >= 110f
-        }
-        val barColor = if (isWarning) 0xFFFF5E5E.toInt() else palette.accentColor
-        val sweep = (64f * subFraction).coerceIn(0f, 64f)
-        if (sweep > 0.5f) {
-            arcPaint.color = barColor
-            canvas.drawArc(arcOval, 122f, -sweep, false, arcPaint)
-        }
-
-        // Left / Right markers (E/F or C/H)
-        subTextPaint.color = palette.secondaryTextColor
-        subTextPaint.textSize = 17f
-        canvas.drawText(spec.subLeftLabel, cx - 126f, cy + 204f, subTextPaint)
-        canvas.drawText(spec.subRightLabel, cx + 126f, cy + 204f, subTextPaint)
-
-        // Vector icon (`fuel.svg` or `coolant.svg`)
-        val iconPic = GeelyVectorSvgCache.getOrLoad(
-            context = context,
-            assetPath = spec.subIconAsset,
-            widthPx = 26,
-            heightPx = 26,
-            tintColor = if (isWarning) barColor else Color.WHITE,
-        )
-        if (iconPic != null) {
-            val save = canvas.save()
-            val iconX = if (rawSub != null) cx - 34f else cx - 13f
-            val iconY = cy + 186f
-            canvas.translate(iconX, iconY)
-            canvas.drawPicture(iconPic)
-            canvas.restoreToCount(save)
-        }
-
-        if (rawSub != null) {
-            val valueLabel = when (spec) {
-                GeelyDialSpec.SPEED -> "${rawSub.roundToInt()}%"
-                GeelyDialSpec.TACHOMETER -> "${rawSub.roundToInt()}°C"
-            }
-            subTextPaint.color = if (isWarning) barColor else palette.primaryTextColor
-            subTextPaint.textSize = 19f
-            canvas.drawText(valueLabel, cx + 16f, cy + 206f, subTextPaint)
-        }
-    }
-
-    companion object {
-        const val DIAL_SIZE = 520f
-    }
-}
-
 /**
- * Radial map vignette (`Lmb0;`) + 192x72 box-blurred album background (`Lpa0;` / `Lqa0;`)
- * + Fake Ultra dual vector dials (`Lva0;`) + bottom status bar (`Lk12;.s`) in `1920x720` space.
+ * Multi-theme CarPlay Ultra cluster overlay: ambient map vignette + box-blurred album background
+ * + dual 520x520 instrument dials + bottom music/status bar in `1920x720` space.
  */
 internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     var config: GeelySelfDrawConfig = GeelyClusterPrefs.load(context)
@@ -1362,7 +1013,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         set(value) {
             if (field != value) {
                 field = value
-                syncCenterArtwork()
                 invalidate()
             }
         }
@@ -1386,8 +1036,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     private var nowPlayingActive: Boolean = false
 
     private val colorTransition = GeelyColorTransition(durationMs = 800L)
-    private val leftDial = GeelySingleDialRenderer(context)
-    private val rightDial = GeelySingleDialRenderer(context)
     private val ultraThemeRenderer = GeelyUltraThemeRenderer(context)
 
     @Volatile
@@ -1395,17 +1043,8 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     private var pollFuture: ScheduledFuture<*>? = null
     private val pollInFlight = AtomicBoolean(false)
 
-    private val vignettePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val blurPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val bottomBarBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val bottomBarLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        strokeWidth = 1.5f
-    }
-    private val bottomTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        textSize = 23f
-    }
     private val centerCoverClip = Path()
     private val centerCoverRect = RectF()
     private val timeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -1424,7 +1063,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             blurredArtwork = null
             dominantAlbumColor = null
             artworkTransitionStartMs = SystemClock.uptimeMillis()
-            syncCenterArtwork()
             invalidate()
             return
         }
@@ -1434,7 +1072,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         blurredArtwork = createBoxBlurredBitmap(bitmap, width = 192, height = 72, radius = 14)
         dominantAlbumColor = GeelyColorTransition.extractDominantAlbumAccent(bitmap)
         artworkTransitionStartMs = SystemClock.uptimeMillis()
-        syncCenterArtwork()
         invalidate()
     }
 
@@ -1444,10 +1081,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             nowPlayingActive = playing
             invalidate()
         }
-    }
-
-    private fun syncCenterArtwork() {
-        rightDial.centerArtwork = if (routeActive && config.albumArtEnabled) rawArtwork else null
     }
 
     override fun onAttachedToWindow() {
@@ -1493,8 +1126,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     private fun stopPolling() {
         pollFuture?.cancel(false)
         pollFuture = null
-        leftDial.reset()
-        rightDial.reset()
         ultraThemeRenderer.reset()
         colorTransition.reset()
     }
@@ -1508,18 +1139,17 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         val nowElapsed = SystemClock.elapsedRealtime()
         var needsNextFrame = false
         val themeStyle = config.dialThemeStyle
-        val isCustomUltraTheme = themeStyle != GeelyClusterThemeStyle.FAKE_ULTRA
 
         // Resolve active dial accent color (`DEFAULT` / `SPEED` / `ALBUM`) with 800ms transition
         val targetAccent = when (config.dialColorMode) {
-            GeelyDialColorMode.DEFAULT -> GeelyColorTransition.DEFAULT_CYAN
+            GeelyDialColorMode.DEFAULT -> themeStyle.defaultAccentColor(nightMode)
             GeelyDialColorMode.SPEED -> {
                 val spd = sensorSnapshot.speedKmh.valueIfFresh(nowElapsed)
                     ?: if (previewMode) 76f else 0f
                 GeelyColorTransition.colorForSpeed(spd)
             }
             GeelyDialColorMode.ALBUM -> {
-                dominantAlbumColor ?: GeelyColorTransition.DEFAULT_CYAN
+                dominantAlbumColor ?: themeStyle.defaultAccentColor(nightMode)
             }
         }
         colorTransition.updateTarget(targetAccent, nowElapsed)
@@ -1527,7 +1157,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         if (colorTransition.isAnimating(nowElapsed)) {
             needsNextFrame = true
         }
-        val palette = GeelyDialPalette.fromAccent(currentAccent, nightMode)
 
         // 1. Background / Vignette / Standby Backdrop
         val hasAlbumArt = rawArtwork != null && rawArtwork?.isRecycled == false
@@ -1536,25 +1165,15 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                 needsNextFrame = true
             }
             if (config.mapVignetteEnabled) {
-                if (isCustomUltraTheme) {
-                    ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = true)
-                } else {
-                    vignettePaint.shader = if (nightMode) NIGHT_VIGNETTE_SHADER else DAY_VIGNETTE_SHADER
-                    canvas.drawRect(0f, 0f, 1920f, 720f, vignettePaint)
-                }
+                ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = true)
             }
             drawCenteredAlbumCover(canvas)
-        } else if (isCustomUltraTheme) {
+        } else {
             if (config.mapVignetteEnabled || !routeActive) {
                 ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive)
             }
             if (!routeActive) {
                 ultraThemeRenderer.drawStandbyWatermark(canvas, themeStyle, nightMode)
-            }
-        } else {
-            if (config.mapVignetteEnabled) {
-                vignettePaint.shader = if (nightMode) NIGHT_VIGNETTE_SHADER else DAY_VIGNETTE_SHADER
-                canvas.drawRect(0f, 0f, 1920f, 720f, vignettePaint)
             }
         }
 
@@ -1563,19 +1182,15 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             val leftSave = canvas.save()
             canvas.translate(88f, 98f)
             canvas.clipRect(0f, 0f, 520f, 520f)
-            val animatingLeft = if (isCustomUltraTheme) {
-                ultraThemeRenderer.drawLeftSpeedDial(
-                    canvas = canvas,
-                    style = themeStyle,
-                    sensors = sensorSnapshot,
-                    accentColor = currentAccent,
-                    nightMode = nightMode,
-                    nowMs = nowElapsed,
-                    previewDemo = previewMode,
-                )
-            } else {
-                leftDial.draw(canvas, GeelyDialSpec.SPEED, sensorSnapshot, palette, nowElapsed, previewMode)
-            }
+            val animatingLeft = ultraThemeRenderer.drawLeftSpeedDial(
+                canvas = canvas,
+                style = themeStyle,
+                sensors = sensorSnapshot,
+                accentColor = currentAccent,
+                nightMode = nightMode,
+                nowMs = nowElapsed,
+                previewDemo = previewMode,
+            )
             if (animatingLeft) {
                 needsNextFrame = true
             }
@@ -1588,72 +1203,42 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             canvas.translate(1312f, 98f)
             canvas.clipRect(0f, 0f, 520f, 520f)
             val rightArtwork = if (routeActive && config.albumArtEnabled) rawArtwork else null
-            val animatingRight = if (isCustomUltraTheme) {
-                ultraThemeRenderer.drawRightTachDial(
-                    canvas = canvas,
-                    style = themeStyle,
-                    sensors = sensorSnapshot,
-                    accentColor = currentAccent,
-                    nightMode = nightMode,
-                    nowMs = nowElapsed,
-                    previewDemo = previewMode,
-                    centerArtwork = rightArtwork,
-                )
-            } else {
-                rightDial.draw(canvas, GeelyDialSpec.TACHOMETER, sensorSnapshot, palette, nowElapsed, previewMode)
-            }
+            val animatingRight = ultraThemeRenderer.drawRightTachDial(
+                canvas = canvas,
+                style = themeStyle,
+                sensors = sensorSnapshot,
+                accentColor = currentAccent,
+                nightMode = nightMode,
+                nowMs = nowElapsed,
+                previewDemo = previewMode,
+                centerArtwork = rightArtwork,
+            )
             if (animatingRight) {
                 needsNextFrame = true
             }
             canvas.restoreToCount(rightSave)
         }
 
-        // 4. Bottom status / live lyrics & song bar (`Y: 660..720`) — unified across ALL 4 themes
+        // 4. Bottom status / live lyrics & song bar (`Y: 660..720`) — unified across all themes
         if (config.bottomBarEnabled) {
             val timeText = timeFormatter.format(Date())
             val avgFuel = sensorSnapshot.avgFuelLPer100Km.valueIfFresh(nowElapsed)
                 ?: if (previewMode) 6.8f else null
             val fuelText = if (avgFuel != null) String.format(Locale.US, "平均油耗 %.1f L/100km", avgFuel) else ""
             val demoSong = if (previewMode && nowPlayingTitle.isNullOrBlank()) "阿拉斯加海湾" else nowPlayingTitle
-            if (!demoSong.isNullOrBlank()) {
-                if (!isCustomUltraTheme) {
-                    // Subtle bottom scrim for Fake Ultra so white lyrics remain crystal clear over bright daytime maps
-                    bottomBarBgPaint.shader = LinearGradient(
-                        0f, 650f, 0f, 720f,
-                        intArrayOf(Color.TRANSPARENT, Color.argb(120, 6, 12, 16), Color.argb(190, 6, 12, 16)),
-                        floatArrayOf(0f, 0.35f, 1f),
-                        Shader.TileMode.CLAMP,
-                    )
-                    canvas.drawRect(0f, 650f, 1920f, 720f, bottomBarBgPaint)
-                }
-                if (ultraThemeRenderer.drawUltraBottomMusicBar(
-                        canvas = canvas,
-                        style = themeStyle,
-                        nightMode = nightMode,
-                        songTitle = demoSong,
-                        isPlaying = nowPlayingActive || previewMode,
-                        accentColor = currentAccent,
-                        nowMs = SystemClock.uptimeMillis(),
-                        fallbackTime = timeText,
-                        fallbackFuel = fuelText,
-                    )
-                ) {
-                    needsNextFrame = true
-                }
-            } else if (isCustomUltraTheme) {
-                ultraThemeRenderer.drawUltraBottomMusicBar(
+            if (ultraThemeRenderer.drawUltraBottomMusicBar(
                     canvas = canvas,
                     style = themeStyle,
                     nightMode = nightMode,
-                    songTitle = null,
-                    isPlaying = false,
+                    songTitle = demoSong?.takeIf { it.isNotBlank() },
+                    isPlaying = !demoSong.isNullOrBlank() && (nowPlayingActive || previewMode),
                     accentColor = currentAccent,
                     nowMs = SystemClock.uptimeMillis(),
                     fallbackTime = timeText,
                     fallbackFuel = fuelText,
                 )
-            } else {
-                drawBottomStatusBar(canvas, nowElapsed, palette)
+            ) {
+                needsNextFrame = true
             }
         }
 
@@ -1714,78 +1299,10 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         canvas.restoreToCount(save)
     }
 
-    private fun drawBottomStatusBar(
-        canvas: Canvas,
-        nowElapsed: Long,
-        palette: GeelyDialPalette,
-    ) {
-        bottomBarBgPaint.shader = LinearGradient(
-            0f,
-            648f,
-            0f,
-            720f,
-            intArrayOf(
-                Color.TRANSPARENT,
-                Color.argb(150, 6, 12, 16),
-                Color.argb(215, 6, 12, 16),
-            ),
-            floatArrayOf(0f, 0.25f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-        canvas.drawRect(0f, 648f, 1920f, 720f, bottomBarBgPaint)
-
-        bottomBarLinePaint.shader = LinearGradient(
-            320f,
-            662f,
-            1600f,
-            662f,
-            intArrayOf(
-                Color.TRANSPARENT,
-                palette.ringStrokeColor,
-                palette.ringStrokeColor,
-                Color.TRANSPARENT,
-            ),
-            floatArrayOf(0f, 0.22f, 0.78f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-        canvas.drawLine(320f, 662f, 1600f, 662f, bottomBarLinePaint)
-
-        val timeText = timeFormatter.format(Date())
-        val avgFuel = sensorSnapshot.avgFuelLPer100Km.valueIfFresh(nowElapsed)
-            ?: if (previewMode) 6.8f else null
-        val fuelText = if (avgFuel != null) {
-            String.format(Locale.US, "平均油耗 %.1f L/100km", avgFuel)
-        } else {
-            ""
-        }
-
-        val combined = listOf(timeText, fuelText).filter { it.isNotBlank() }.joinToString("   ·   ")
-        bottomTextPaint.textAlign = Paint.Align.CENTER
-        bottomTextPaint.color = palette.primaryTextColor
-        canvas.drawText(combined, 960f, 699f, bottomTextPaint)
-    }
-
     companion object {
-        private val NIGHT_VIGNETTE_SHADER: RadialGradient = createVignetteShader(0x0005080E)
-        private val DAY_VIGNETTE_SHADER: RadialGradient = createVignetteShader(0x00E1E7EF)
-
         private fun isSystemNightMode(context: Context): Boolean =
             (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
-
-        /** Matches `Lmb0;.b(baseRgb)`: 9-stop radial gradient with scale(650, 245) & translate(987, 418). */
-        private fun createVignetteShader(baseRgb: Int): RadialGradient {
-            val rgb = baseRgb and 0x00FFFFFF
-            val alphas = intArrayOf(0, 12, 36, 72, 118, 164, 204, 232, 248)
-            val stops = floatArrayOf(0f, 0.25f, 0.42f, 0.56f, 0.68f, 0.78f, 0.87f, 0.94f, 1f)
-            val colors = IntArray(alphas.size) { i -> (alphas[i] shl 24) or rgb }
-            return RadialGradient(0f, 0f, 1.2f, colors, stops, Shader.TileMode.CLAMP).apply {
-                val matrix = Matrix()
-                matrix.setScale(650f, 245f)
-                matrix.postTranslate(987f, 418f)
-                setLocalMatrix(matrix)
-            }
-        }
 
         /** 3-pass separable box blur on 192x72 downsampled bitmap matching `Lpa0;` / `Lqa0;`. */
         fun createBoxBlurredBitmap(source: Bitmap, width: Int = 192, height: Int = 72, radius: Int = 14): Bitmap? =
