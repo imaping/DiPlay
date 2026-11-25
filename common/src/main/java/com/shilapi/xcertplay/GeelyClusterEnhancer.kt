@@ -956,7 +956,7 @@ private class GeelyClusterSettingsPanel(
         addSwitchRow(
             container = container,
             title = "右侧圆盘仪表",
-            subtitle = "转速＋水温；导航时中心显示圆角专辑封面，不可用数据以 — 显示。",
+            subtitle = "转速与实时档位；导航时中心显示圆角专辑封面。",
             checked = config.dialRightEnabled,
         ) { checked ->
             config = config.copy(dialRightEnabled = checked)
@@ -964,8 +964,8 @@ private class GeelyClusterSettingsPanel(
         }
         addSwitchRow(
             container = container,
-            title = "底部状态栏",
-            subtitle = "在仪表底部居中显示当前时间、平均油耗与水温。",
+            title = "底部歌词与状态栏",
+            subtitle = "播放音乐时居中显示动态声波与实时歌词/歌名，静音时显示时间与平均油耗。",
             checked = config.bottomBarEnabled,
         ) { checked ->
             config = config.copy(bottomBarEnabled = checked)

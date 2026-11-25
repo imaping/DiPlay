@@ -32,7 +32,6 @@ internal data class GeelyClusterSensorSnapshot(
     val rpm: GeelyTimedFloat = GeelyTimedFloat(),
     val avgFuelLPer100Km: GeelyTimedFloat = GeelyTimedFloat(),
     val fuelPercent: GeelyTimedFloat = GeelyTimedFloat(),
-    val coolantTempC: GeelyTimedFloat = GeelyTimedFloat(),
     val gearLabel: String? = null,
     val gearUpdatedAtMs: Long = 0L,
 ) {
@@ -44,12 +43,11 @@ internal data class GeelyClusterSensorSnapshot(
 }
 
 /**
- * Reflection reader for ECARX AdaptAPI `ISensor` 6 vehicle channels:
+ * Reflection reader for ECARX AdaptAPI `ISensor` 5 vehicle channels:
  * - Speed (`0x00101A00`, m/s -> km/h)
  * - RPM (`0x00100900`)
  * - Average fuel consumption (`0x00400100`, L/100km)
  * - Fuel level percentage (`0x00404500`, %)
- * - Coolant temperature (`0x00100F00`, °C)
  * - Transmission gear (`0x00200200`, `P`/`R`/`N`/`D`/`M1..M10`)
  */
 internal object GeelyEcarxSensorReader {
@@ -57,7 +55,6 @@ internal object GeelyEcarxSensorReader {
     private const val SENSOR_RPM = 0x00100900
     private const val SENSOR_AVG_FUEL = 0x00400100
     private const val SENSOR_FUEL_PERCENT = 0x00404500
-    private const val SENSOR_COOLANT_TEMP = 0x00100F00
     private const val SENSOR_GEAR = 0x00200200
     private const val GEAR_PARK = 2097712
     private const val GEAR_REVERSE = 2097728
@@ -70,13 +67,6 @@ internal object GeelyEcarxSensorReader {
     private var sensorManager: Any? = null
     private var sensorValueMethod: java.lang.reflect.Method? = null
     private var sensorEventMethod: java.lang.reflect.Method? = null
-    private var sensorSupportedMethod: java.lang.reflect.Method? = null
-    @Volatile
-    private var discoveredCoolantSensorId: Int = SENSOR_COOLANT_TEMP
-    @Volatile
-    private var discoveredCoolantUsesEvent: Boolean = false
-    @Volatile
-    private var sensorProbeLogged: Boolean = false
     @Volatile
     private var logger: (String) -> Unit = {}
     @Volatile
@@ -128,19 +118,6 @@ internal object GeelyEcarxSensorReader {
             latestSnapshot.fuelPercent
         }
 
-        val coolantRaw = if (discoveredCoolantUsesEvent) {
-            sensorEventMethod?.let { eventMethod ->
-                runCatching { (eventMethod.invoke(sensor, discoveredCoolantSensorId) as? Number)?.toFloat() }.getOrNull()
-            }
-        } else {
-            invokeSensor(sensor, method, discoveredCoolantSensorId)
-        }
-        val coolant = if (coolantRaw != null && coolantRaw.isFinite() && coolantRaw in -40f..200f && coolantRaw != 0f) {
-            GeelyTimedFloat(coolantRaw, now)
-        } else {
-            latestSnapshot.coolantTempC
-        }
-
         val gearRaw = sensorEventMethod?.let { eventMethod ->
             runCatching { (eventMethod.invoke(sensor, SENSOR_GEAR) as? Number)?.toInt() }.getOrNull()
         }
@@ -153,7 +130,6 @@ internal object GeelyEcarxSensorReader {
             rpm = rpm,
             avgFuelLPer100Km = avgFuel,
             fuelPercent = fuelPct,
-            coolantTempC = coolant,
             gearLabel = gearLabel,
             gearUpdatedAtMs = gearUpdatedAt,
         )
@@ -192,59 +168,12 @@ internal object GeelyEcarxSensorReader {
             val getEvent = runCatching {
                 sensor.javaClass.getMethod("getSensorEvent", Int::class.javaPrimitiveType)
             }.getOrNull()
-            val isSupported = runCatching {
-                sensor.javaClass.getMethod("isSensorSupported", Int::class.javaPrimitiveType)
-            }.getOrNull()
             sensorManager = sensor
             sensorValueMethod = getValue
             sensorEventMethod = getEvent
-            sensorSupportedMethod = isSupported
             connected = true
-            probeCoolantSensorsOnce(sensor, getValue, getEvent, isSupported)
             sensor
         }.getOrNull()
-    }
-
-    private fun probeCoolantSensorsOnce(
-        sensor: Any,
-        getValue: java.lang.reflect.Method,
-        getEvent: java.lang.reflect.Method?,
-        isSupported: java.lang.reflect.Method?,
-    ) {
-        if (sensorProbeLogged) return
-        sensorProbeLogged = true
-        runCatching {
-            val iSensorClass = Class.forName("com.ecarx.xui.adaptapi.car.sensor.ISensor")
-            val summary = StringBuilder()
-            for (field in iSensorClass.fields) {
-                if (field.type != Int::class.javaPrimitiveType) continue
-                val name = field.name
-                if (!name.startsWith("SENSOR_TYPE_")) continue
-                val upper = name.uppercase()
-                if ("COOLANT" !in upper && "WATER" !in upper && "ENGINE" !in upper && "TEMP" !in upper && "ENDURANCE" !in upper) {
-                    continue
-                }
-                val id = runCatching { field.getInt(null) }.getOrNull() ?: continue
-                val status = runCatching { isSupported?.invoke(sensor, id)?.toString() }.getOrNull()
-                if (status != null && (status.equals("notavailable", true) || status.equals("error", true))) {
-                    continue
-                }
-                val fVal = runCatching { (getValue.invoke(sensor, id) as? Number)?.toFloat() }.getOrNull()
-                val eVal = runCatching { (getEvent?.invoke(sensor, id) as? Number)?.toInt() }.getOrNull()
-                if (summary.isNotEmpty()) summary.append(", ")
-                summary.append("$name(0x${id.toString(16)})[st=$status val=$fVal ev=$eVal]")
-                if (("COOLANT" in upper || "WATER" in upper) && "LEVEL" !in upper) {
-                    if (fVal != null && fVal.isFinite() && fVal in -40f..200f && fVal != 0f) {
-                        discoveredCoolantSensorId = id
-                        discoveredCoolantUsesEvent = false
-                    } else if (eVal != null && eVal in -40..200 && eVal != 0) {
-                        discoveredCoolantSensorId = id
-                        discoveredCoolantUsesEvent = true
-                    }
-                }
-            }
-            logger("GeelySensors: probe selectedCoolant=0x${discoveredCoolantSensorId.toString(16)} found=[$summary]")
-        }
     }
 
     private fun attachConnectableIfPresent(carInstance: Any) {

@@ -30,7 +30,6 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
     private val leftMainDamped = GeelyDampedFloat(durationMs = 200L)
     private val leftSubDamped = GeelyDampedFloat(durationMs = 700L)
     private val rightMainDamped = GeelyDampedFloat(durationMs = 200L)
-    private val rightSubDamped = GeelyDampedFloat(durationMs = 700L)
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -47,7 +46,6 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         leftMainDamped.reset()
         leftSubDamped.reset()
         rightMainDamped.reset()
-        rightSubDamped.reset()
     }
 
     /**
@@ -165,7 +163,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         canvas.drawText("Ultra", startX + badgeSize + gap + carPlayW, baseY, textPaint)
     }
 
-    /** Centered bottom music visualizer & song title pill (fallback to time/fuel/coolant when silent). */
+    /** Centered bottom music visualizer & song title pill (fallback to time/fuel when silent). */
     fun drawUltraBottomMusicBar(
         canvas: Canvas,
         style: GeelyClusterThemeStyle,
@@ -176,7 +174,6 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         nowMs: Long,
         fallbackTime: String,
         fallbackFuel: String,
-        fallbackTemp: String,
     ): Boolean {
         val useLightPalette = style == GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT && !nightMode
         val title = songTitle?.trim().orEmpty()
@@ -185,7 +182,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
             textPaint.textSize = 22f
             textPaint.color = if (useLightPalette) Color.argb(195, 36, 44, 54) else Color.argb(200, 224, 232, 240)
             textPaint.textAlign = Paint.Align.CENTER
-            val parts = listOf(fallbackTime, fallbackFuel, fallbackTemp).filter { it.isNotBlank() }
+            val parts = listOf(fallbackTime, fallbackFuel).filter { it.isNotBlank() }
             canvas.drawText(parts.joinToString("   ·   "), 960f, 696f, textPaint)
             return false
         }
@@ -319,17 +316,13 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         centerArtwork: Bitmap?,
     ): Boolean {
         val rawRpm = sensors.rpm.valueIfFresh(nowMs) ?: if (previewDemo) 1290f else 0f
-        val rawCoolant = sensors.coolantTempC.valueIfFresh(nowMs) ?: if (previewDemo) 90f else null
         val gearText = sensors.gearIfFresh(nowMs) ?: if (previewDemo) "D" else "P"
 
         val rpmFrac = (rawRpm / 7000f).coerceIn(0f, 1f)
-        val coolantFrac = (((rawCoolant ?: 50f) - 50f) / 80f).coerceIn(0f, 1f)
         rightMainDamped.updateTarget(rpmFrac, nowMs)
-        if (rawCoolant != null) rightSubDamped.updateTarget(coolantFrac, nowMs)
 
         val curRpmFrac = rightMainDamped.valueAt(nowMs)
-        val curCoolantFrac = if (rawCoolant != null) rightSubDamped.valueAt(nowMs) else 0f
-        val anim = rightMainDamped.isAnimating(nowMs) || (rawCoolant != null && rightSubDamped.isAnimating(nowMs))
+        val anim = rightMainDamped.isAnimating(nowMs)
 
         val cx = 260f
         val cy = 260f
@@ -368,13 +361,6 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
                     val arcCol = if (rawRpm >= 5800f) Color.rgb(255, 76, 58) else withAlpha(effectiveAccent, 235)
                     drawProgressArc(canvas, cx, cy, 212f, 24f, sweep, arcCol)
                 }
-                if (curCoolantFrac > 0.02f) {
-                    arcRect.set(cx - 212f, cy - 212f, cx + 212f, cy + 212f)
-                    strokePaint.strokeWidth = 5f
-                    strokePaint.strokeCap = Paint.Cap.ROUND
-                    strokePaint.color = withAlpha(effectiveAccent, 185)
-                    canvas.drawArc(arcRect, 56f, 68f * curCoolantFrac, false, strokePaint)
-                }
             }
             GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT -> {
                 if (sweep > 0.5f) {
@@ -388,28 +374,16 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
                     21f, numCol,
                     bold = false, redFromIndex = 6,
                 )
-                if (rawCoolant != null && curCoolantFrac > 0.02f) {
-                    arcRect.set(cx - 220f, cy - 220f, cx + 220f, cy + 220f)
-                    strokePaint.strokeWidth = 4.5f
-                    strokePaint.strokeCap = Paint.Cap.ROUND
-                    strokePaint.color = if (rawCoolant >= 110f) Color.rgb(232, 86, 58) else withAlpha(effectiveAccent, 210)
-                    canvas.drawArc(arcRect, 56f, 68f * curCoolantFrac, false, strokePaint)
-                }
             }
             GeelyClusterThemeStyle.FAKE_ULTRA -> Unit
         }
 
-        // 3. Bottom live RPM (+ Coolant °C when sensor is available on this car)
+        // 3. Bottom live RPM label
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textPaint.textSize = 22f
         textPaint.color = if (light) Color.rgb(58, 68, 80) else Color.argb(215, 232, 238, 245)
-        val bottomRpmLabel = if (rawCoolant != null) {
-            "RPM ${rawRpm.roundToInt()} · ${rawCoolant.roundToInt()}°C"
-        } else {
-            "RPM ${rawRpm.roundToInt()}"
-        }
-        canvas.drawText(bottomRpmLabel, cx, if (style == GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS) 444f else 426f, textPaint)
+        canvas.drawText("RPM ${rawRpm.roundToInt()}", cx, if (style == GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS) 444f else 426f, textPaint)
 
         // 4. Center: Album cover (when navigating & available) or live Gear letter
         if (centerArtwork != null && !centerArtwork.isRecycled) {

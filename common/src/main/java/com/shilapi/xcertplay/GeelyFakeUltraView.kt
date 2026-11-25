@@ -349,7 +349,6 @@ internal object GeelySvgPathParser {
  * - `dark.svg`
  * - `highlight.svg`
  * - `fuel.svg`
- * - `coolant.svg`
  *
  * Supports `<defs>`, `<mask>`, `<clipPath>`, `<linearGradient data-sweep-angle="...">`, `<g>`,
  * `<path>`, `<circle>`, `<line>`, `<rect>`, and CSS `style="..."` attributes.
@@ -1009,11 +1008,11 @@ internal enum class GeelyDialSpec(
         minValue = 0f,
         maxValue = 8000f,
         scaleLabels = listOf("0", "1", "2", "3", "4", "5", "6", "7", "8"),
-        subIconAsset = "cluster-visual/themes/fake-ultra/coolant.svg",
-        subMin = 50f,
-        subMax = 130f,
-        subLeftLabel = "C",
-        subRightLabel = "H",
+        subIconAsset = "",
+        subMin = 0f,
+        subMax = 100f,
+        subLeftLabel = "",
+        subRightLabel = "",
     ),
 }
 
@@ -1072,7 +1071,7 @@ internal class GeelySingleDialRenderer(private val context: Context) {
         }
         val rawSub: Float? = when (spec) {
             GeelyDialSpec.SPEED -> sensors.fuelPercent.valueIfFresh(nowMs) ?: if (previewDemo) 68f else null
-            GeelyDialSpec.TACHOMETER -> sensors.coolantTempC.valueIfFresh(nowMs) ?: if (previewDemo) 90f else null
+            GeelyDialSpec.TACHOMETER -> null
         }
 
         val mainFraction = if (rawMain != null) {
@@ -1175,8 +1174,10 @@ internal class GeelySingleDialRenderer(private val context: Context) {
         // 7. Center digital readout
         drawCenterReadout(canvas, cx, cy, spec, rawMain, palette)
 
-        // 8. Bottom sub-gauge (Fuel % on left dial, Coolant °C on right dial)
-        drawSubGauge(canvas, cx, cy, spec, rawSub, curSubFraction, palette)
+        // 8. Bottom sub-gauge (Fuel % on left dial only; factory cluster already displays coolant bar)
+        if (spec == GeelyDialSpec.SPEED) {
+            drawSubGauge(canvas, cx, cy, spec, rawSub, curSubFraction, palette)
+        }
 
         return mainDamped.isAnimating(nowMs) || subDamped.isAnimating(nowMs)
     }
@@ -1613,9 +1614,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             val avgFuel = sensorSnapshot.avgFuelLPer100Km.valueIfFresh(nowElapsed)
                 ?: if (previewMode) 6.8f else null
             val fuelText = if (avgFuel != null) String.format(Locale.US, "平均油耗 %.1f L/100km", avgFuel) else ""
-            val coolant = sensorSnapshot.coolantTempC.valueIfFresh(nowElapsed)
-                ?: if (previewMode) 90f else null
-            val tempText = if (coolant != null) "水温 ${coolant.roundToInt()}°C" else ""
             val demoSong = if (previewMode && nowPlayingTitle.isNullOrBlank()) "阿拉斯加海湾" else nowPlayingTitle
             if (!demoSong.isNullOrBlank()) {
                 if (!isCustomUltraTheme) {
@@ -1638,7 +1636,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                         nowMs = SystemClock.uptimeMillis(),
                         fallbackTime = timeText,
                         fallbackFuel = fuelText,
-                        fallbackTemp = tempText,
                     )
                 ) {
                     needsNextFrame = true
@@ -1654,7 +1651,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                     nowMs = SystemClock.uptimeMillis(),
                     fallbackTime = timeText,
                     fallbackFuel = fuelText,
-                    fallbackTemp = tempText,
                 )
             } else {
                 drawBottomStatusBar(canvas, nowElapsed, palette)
@@ -1760,26 +1756,13 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         val fuelText = if (avgFuel != null) {
             String.format(Locale.US, "平均油耗 %.1f L/100km", avgFuel)
         } else {
-            "平均油耗 --.- L/100km"
-        }
-        val coolant = sensorSnapshot.coolantTempC.valueIfFresh(nowElapsed)
-            ?: if (previewMode) 90f else null
-        val tempText = if (coolant != null) {
-            "水温 ${coolant.roundToInt()}°C"
-        } else {
-            "水温 --°C"
+            ""
         }
 
-        bottomTextPaint.color = palette.primaryTextColor
-        bottomTextPaint.textAlign = Paint.Align.LEFT
-        canvas.drawText(timeText, 640f, 699f, bottomTextPaint)
-
+        val combined = listOf(timeText, fuelText).filter { it.isNotBlank() }.joinToString("   ·   ")
         bottomTextPaint.textAlign = Paint.Align.CENTER
-        bottomTextPaint.color = palette.secondaryTextColor
-        canvas.drawText(fuelText, 960f, 699f, bottomTextPaint)
-
-        bottomTextPaint.textAlign = Paint.Align.RIGHT
-        canvas.drawText(tempText, 1280f, 699f, bottomTextPaint)
+        bottomTextPaint.color = palette.primaryTextColor
+        canvas.drawText(combined, 960f, 699f, bottomTextPaint)
     }
 
     companion object {
