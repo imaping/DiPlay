@@ -269,7 +269,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
 
         val cx = 260f
         val cy = 260f
-        val light = style == GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT && !nightMode
+        val light = style.supportsLightMode && !nightMode
         val effectiveAccent = if (light && accentColor == GeelyColorTransition.DEFAULT_CYAN) {
             Color.rgb(54, 106, 152)
         } else {
@@ -290,16 +290,18 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         when (style) {
             GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> {
                 if (sweep > 0.5f) {
-                    drawClassicSweepBand(canvas, cx, cy, 152f, 236f, sweep, blendWithWhite(effectiveAccent, 0.35f))
+                    val bandCol = if (light) effectiveAccent else blendWithWhite(effectiveAccent, 0.35f)
+                    drawClassicSweepBand(canvas, cx, cy, 152f, 236f, sweep, bandCol, lightMode = light)
                 }
-                drawRadialNumerals(canvas, cx, cy, 194f, (0..180 step 20).map { it.toString() }, 21f, Color.argb(242, 246, 249, 255), bold = true)
-                drawFuelTelemetry(canvas, cx, cy, 228f, curFuelFrac, rawFuel, effectiveAccent, lightMode = false)
+                val numCol = if (light) Color.rgb(34, 44, 56) else Color.argb(242, 246, 249, 255)
+                drawRadialNumerals(canvas, cx, cy, 194f, (0..180 step 20).map { it.toString() }, 21f, numCol, bold = true)
+                drawFuelTelemetry(canvas, cx, cy, 228f, curFuelFrac, rawFuel, effectiveAccent, lightMode = light)
             }
             GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> {
                 if (sweep > 0.5f) {
                     drawProgressArc(canvas, cx, cy, 212f, 24f, sweep, withAlpha(effectiveAccent, 235))
                 }
-                drawFuelTelemetry(canvas, cx, cy, 212f, curFuelFrac, rawFuel, effectiveAccent, lightMode = false)
+                drawFuelTelemetry(canvas, cx, cy, 212f, curFuelFrac, rawFuel, effectiveAccent, lightMode = light)
             }
             GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT -> {
                 if (sweep > 0.5f) {
@@ -364,7 +366,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
 
         val cx = 260f
         val cy = 260f
-        val light = style == GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT && !nightMode
+        val light = style.supportsLightMode && !nightMode
         val effectiveAccent = if (light && accentColor == GeelyColorTransition.DEFAULT_CYAN) {
             Color.rgb(54, 106, 152)
         } else {
@@ -385,20 +387,25 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         when (style) {
             GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> {
                 if (sweep > 0.5f) {
-                    val bandCol = if (rawRpm >= 5800f) Color.rgb(255, 75, 62) else blendWithWhite(effectiveAccent, 0.35f)
-                    drawClassicSweepBand(canvas, cx, cy, 152f, 236f, sweep, bandCol)
+                    val bandCol = when {
+                        rawRpm >= 5800f -> Color.rgb(220, 52, 42)
+                        light -> effectiveAccent
+                        else -> blendWithWhite(effectiveAccent, 0.35f)
+                    }
+                    drawClassicSweepBand(canvas, cx, cy, 152f, 236f, sweep, bandCol, lightMode = light)
                 }
+                val numCol = if (light) Color.rgb(34, 44, 56) else Color.argb(242, 246, 249, 255)
                 drawRadialNumerals(
                     canvas, cx, cy, 194f,
                     (0..7).map { it.toString() },
-                    22f, Color.argb(242, 246, 249, 255),
+                    22f, numCol,
                     bold = true, redFromIndex = 6,
                 )
-                drawCurvedEngraving(canvas, cx, cy, 244f, "DEEPLY ADAPTED FOR GEELY")
+                drawCurvedEngraving(canvas, cx, cy, 244f, "DEEPLY ADAPTED FOR GEELY", lightMode = light)
             }
             GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> {
                 if (sweep > 0.5f) {
-                    val arcCol = if (rawRpm >= 5800f) Color.rgb(255, 76, 58) else withAlpha(effectiveAccent, 235)
+                    val arcCol = if (rawRpm >= 5800f) Color.rgb(232, 68, 52) else withAlpha(effectiveAccent, 235)
                     drawProgressArc(canvas, cx, cy, 212f, 24f, sweep, arcCol)
                 }
             }
@@ -450,8 +457,16 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
     // -------------------------------------------------------------------------
 
     private fun speedDialAssetPath(style: GeelyClusterThemeStyle, nightMode: Boolean): String = when (style) {
-        GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> "cluster-visual/themes/classic-ticks/speed_dial.svg"
-        GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> "cluster-visual/themes/minimal-ring/speed_dial.svg"
+        GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> if (nightMode) {
+            "cluster-visual/themes/classic-ticks/speed_dial.svg"
+        } else {
+            "cluster-visual/themes/classic-ticks/speed_day.svg"
+        }
+        GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> if (nightMode) {
+            "cluster-visual/themes/minimal-ring/speed_dial.svg"
+        } else {
+            "cluster-visual/themes/minimal-ring/speed_day.svg"
+        }
         GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT -> if (nightMode) {
             "cluster-visual/themes/clean-light/speed_night.svg"
         } else {
@@ -461,8 +476,16 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
     }
 
     private fun tachDialAssetPath(style: GeelyClusterThemeStyle, nightMode: Boolean): String = when (style) {
-        GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> "cluster-visual/themes/classic-ticks/tach_dial.svg"
-        GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> "cluster-visual/themes/minimal-ring/tach_dial.svg"
+        GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> if (nightMode) {
+            "cluster-visual/themes/classic-ticks/tach_dial.svg"
+        } else {
+            "cluster-visual/themes/classic-ticks/tach_day.svg"
+        }
+        GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> if (nightMode) {
+            "cluster-visual/themes/minimal-ring/tach_dial.svg"
+        } else {
+            "cluster-visual/themes/minimal-ring/tach_day.svg"
+        }
         GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT -> if (nightMode) {
             "cluster-visual/themes/clean-light/tach_night.svg"
         } else {
@@ -479,18 +502,19 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         outerR: Float,
         sweepDeg: Float,
         color: Int,
+        lightMode: Boolean = false,
     ) {
         val bandR = (outerR + innerR) / 2f
         strokePaint.strokeWidth = (outerR - innerR) - 4f
         strokePaint.strokeCap = Paint.Cap.BUTT
-        strokePaint.color = withAlpha(color, 92)
+        strokePaint.color = withAlpha(color, if (lightMode) 62 else 92)
         arcRect.set(cx - bandR, cy - bandR, cx + bandR, cy + bandR)
         canvas.drawArc(arcRect, 135f, sweepDeg, false, strokePaint)
 
         val rad = Math.toRadians((135f + sweepDeg).toDouble())
         strokePaint.strokeWidth = 3.5f
         strokePaint.strokeCap = Paint.Cap.ROUND
-        strokePaint.color = Color.argb(245, 255, 255, 255)
+        strokePaint.color = if (lightMode) color else Color.argb(245, 255, 255, 255)
         canvas.drawLine(
             cx + (innerR + 2f) * cos(rad).toFloat(),
             cy + (innerR + 2f) * sin(rad).toFloat(),
@@ -544,14 +568,21 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         }
     }
 
-    private fun drawCurvedEngraving(canvas: Canvas, cx: Float, cy: Float, radius: Float, text: String) {
+    private fun drawCurvedEngraving(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        text: String,
+        lightMode: Boolean = false,
+    ) {
         curvedTextPath.reset()
         innerArcRect.set(cx - radius, cy - radius, cx + radius, cy + radius)
         curvedTextPath.addArc(innerArcRect, -58f, 64f)
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.textSize = 10.5f
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        textPaint.color = Color.argb(150, 224, 232, 240)
+        textPaint.color = if (lightMode) Color.argb(155, 71, 85, 105) else Color.argb(150, 224, 232, 240)
         canvas.drawTextOnPath(text, curvedTextPath, 0f, 0f, textPaint)
     }
 

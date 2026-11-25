@@ -88,11 +88,11 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             GeelyClusterThemeStyle.HERITAGE_GOLD ->
                 drawHeritageGoldDynamic(canvas, false, lightMode, accentColor, rawSpeed, 0f, curSpeedFrac, rawFuel, curFuelFrac, "D", null)
             GeelyClusterThemeStyle.AERO_MECHA ->
-                drawAeroMechaDynamic(canvas, false, accentColor, rawSpeed, 0f, curSpeedFrac, rawFuel, curFuelFrac, "D", null)
+                drawAeroMechaDynamic(canvas, false, lightMode, accentColor, rawSpeed, 0f, curSpeedFrac, rawFuel, curFuelFrac, "D", null)
             GeelyClusterThemeStyle.NORDIC_GLASS ->
                 drawNordicGlassDynamic(canvas, false, lightMode, accentColor, rawSpeed, 0f, curSpeedFrac, rawFuel, curFuelFrac, "D", null)
             GeelyClusterThemeStyle.RETRO_VFD ->
-                drawRetroVfdDynamic(canvas, false, accentColor, rawSpeed, 0f, curSpeedFrac, rawFuel, curFuelFrac, "D", null)
+                drawRetroVfdDynamic(canvas, false, lightMode, accentColor, rawSpeed, 0f, curSpeedFrac, rawFuel, curFuelFrac, "D", null)
             else -> Unit
         }
     }
@@ -115,11 +115,11 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             GeelyClusterThemeStyle.HERITAGE_GOLD ->
                 drawHeritageGoldDynamic(canvas, true, lightMode, accentColor, 0f, rawRpm, curRpmFrac, null, 0f, gearText, centerArtwork)
             GeelyClusterThemeStyle.AERO_MECHA ->
-                drawAeroMechaDynamic(canvas, true, accentColor, 0f, rawRpm, curRpmFrac, null, 0f, gearText, centerArtwork)
+                drawAeroMechaDynamic(canvas, true, lightMode, accentColor, 0f, rawRpm, curRpmFrac, null, 0f, gearText, centerArtwork)
             GeelyClusterThemeStyle.NORDIC_GLASS ->
                 drawNordicGlassDynamic(canvas, true, lightMode, accentColor, 0f, rawRpm, curRpmFrac, null, 0f, gearText, centerArtwork)
             GeelyClusterThemeStyle.RETRO_VFD ->
-                drawRetroVfdDynamic(canvas, true, accentColor, 0f, rawRpm, curRpmFrac, null, 0f, gearText, centerArtwork)
+                drawRetroVfdDynamic(canvas, true, lightMode, accentColor, 0f, rawRpm, curRpmFrac, null, 0f, gearText, centerArtwork)
             else -> Unit
         }
     }
@@ -158,9 +158,17 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
         return when (style) {
             GeelyClusterThemeStyle.SPORT_CHRONO -> "cluster-visual/themes/sport-chrono/${kind}_${mode}.svg"
             GeelyClusterThemeStyle.HERITAGE_GOLD -> "cluster-visual/themes/heritage-gold/${kind}_${mode}.svg"
-            GeelyClusterThemeStyle.AERO_MECHA -> "cluster-visual/themes/aero-mecha/${kind}_dial.svg"
+            GeelyClusterThemeStyle.AERO_MECHA -> if (lightMode) {
+                "cluster-visual/themes/aero-mecha/${kind}_day.svg"
+            } else {
+                "cluster-visual/themes/aero-mecha/${kind}_dial.svg"
+            }
             GeelyClusterThemeStyle.NORDIC_GLASS -> "cluster-visual/themes/nordic-glass/${kind}_${mode}.svg"
-            GeelyClusterThemeStyle.RETRO_VFD -> "cluster-visual/themes/retro-vfd/${kind}_dial.svg"
+            GeelyClusterThemeStyle.RETRO_VFD -> if (lightMode) {
+                "cluster-visual/themes/retro-vfd/${kind}_day.svg"
+            } else {
+                "cluster-visual/themes/retro-vfd/${kind}_dial.svg"
+            }
             else -> ""
         }
     }
@@ -454,6 +462,7 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
     private fun drawAeroMechaDynamic(
         canvas: Canvas,
         isRight: Boolean,
+        lightMode: Boolean,
         accentColor: Int,
         rawSpeed: Float,
         rawRpm: Float,
@@ -465,7 +474,7 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
     ) {
         val cx = CX
         val cy = CY
-        val hotColor = Color.rgb(255, 77, 46)
+        val hotColor = if (lightMode) Color.rgb(220, 38, 38) else Color.rgb(255, 77, 46)
 
         // 1. 28 segmented trapezoidal LED blocks
         val segments = 28
@@ -483,14 +492,14 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
 
             if (isLit && i == activeCount - 1) {
                 val haloCol = if (isHot) hotColor else accentColor
-                drawAnnularSector(canvas, cx, cy, rIn - 4f, rOut + 4f, startDeg - 0.6f, sweepSeg + 1.2f, withAlpha(haloCol, 90))
+                drawAnnularSector(canvas, cx, cy, rIn - 4f, rOut + 4f, startDeg - 0.6f, sweepSeg + 1.2f, withAlpha(haloCol, if (lightMode) 68 else 90))
             }
 
             val blockCol = when {
                 isLit && isHot -> hotColor
                 isLit -> accentColor
-                isHot -> Color.argb(52, 255, 77, 46)
-                else -> Color.argb(42, 148, 163, 184)
+                isHot -> Color.argb(if (lightMode) 56 else 52, 239, 68, 68)
+                else -> if (lightMode) Color.argb(66, 100, 116, 139) else Color.argb(42, 148, 163, 184)
             }
             drawAnnularSector(canvas, cx, cy, rIn, rOut, startDeg, sweepSeg, blockCol)
         }
@@ -507,9 +516,9 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             labels = labels,
             typeface = sansBoldItalic,
             textSize = 17f,
-            normalColor = Color.argb(200, 226, 232, 240),
+            normalColor = if (lightMode) Color.rgb(51, 65, 85) else Color.argb(200, 226, 232, 240),
             redFromIndex = if (isRight) 6 else Int.MAX_VALUE,
-            redColor = Color.rgb(255, 94, 66),
+            redColor = hotColor,
         )
 
         // 3. Center bold-italic numeral / album art
@@ -519,7 +528,7 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.typeface = sansBoldItalic
             textPaint.textSize = 104f
-            textPaint.color = Color.WHITE
+            textPaint.color = if (lightMode) Color.rgb(15, 23, 42) else Color.WHITE
             if (isRight) {
                 canvas.drawText(gearText, cx - 4f, cy + 26f, textPaint)
                 textPaint.typeface = monoBold
@@ -535,24 +544,26 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             }
         }
 
-        // 4. Bottom tactical fuel blocks / hexagonal RPM readout (frame is in tach_dial.svg)
+        // 4. Bottom tactical fuel blocks / hexagonal RPM readout (frame is in tach SVG)
         if (!isRight) {
             val segs = 10
             val litSegs = if (rawFuel != null) (curFuelFrac * segs).roundToInt().coerceIn(0, segs) else 0
             val sx = cx - 74f
             val sy = 434f
             val fuelColor = if (rawFuel != null && rawFuel <= 15f) hotColor else accentColor
+            val dimSegColor = if (lightMode) Color.argb(72, 100, 116, 139) else Color.argb(56, 148, 163, 184)
             for (i in 0 until segs) {
-                fillPaint.color = if (i < litSegs) fuelColor else Color.argb(56, 148, 163, 184)
+                fillPaint.color = if (i < litSegs) fuelColor else dimSegColor
                 canvas.drawRect(sx + i * 15.2f, sy, sx + i * 15.2f + 11f, sy + 7f, fillPaint)
             }
             val label = if (rawFuel != null) "FUEL ${rawFuel.roundToInt()}%" else "FUEL --%"
-            drawFuelIconAndCustomText(canvas, cx, 401f, label, Color.rgb(226, 232, 240), monoBold, 18.5f, 19)
+            val txtCol = if (lightMode) Color.rgb(30, 41, 59) else Color.rgb(226, 232, 240)
+            drawFuelIconAndCustomText(canvas, cx, 401f, label, txtCol, monoBold, 18.5f, 19)
         } else {
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.typeface = monoBold
             textPaint.textSize = 19f
-            textPaint.color = Color.rgb(248, 250, 252)
+            textPaint.color = if (lightMode) Color.rgb(15, 23, 42) else Color.rgb(248, 250, 252)
             canvas.drawText("${rawRpm.roundToInt()} RPM", cx, 429f, textPaint)
         }
     }
@@ -666,6 +677,7 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
     private fun drawRetroVfdDynamic(
         canvas: Canvas,
         isRight: Boolean,
+        lightMode: Boolean,
         accentColor: Int,
         rawSpeed: Float,
         rawRpm: Float,
@@ -677,10 +689,10 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
     ) {
         val cx = CX
         val cy = CY
-        val amber = Color.rgb(255, 176, 32)
-        val danger = Color.rgb(255, 77, 79)
+        val amber = if (lightMode) Color.rgb(217, 119, 6) else Color.rgb(255, 176, 32)
+        val danger = if (lightMode) Color.rgb(220, 38, 38) else Color.rgb(255, 77, 79)
 
-        // 1. 36 stepped-height VFD phosphor bars
+        // 1. 36 stepped-height VFD / reflective LCD bars
         val bars = 36
         val activeBars = (curFrac * bars).roundToInt().coerceIn(0, bars)
         strokePaint.strokeCap = Paint.Cap.BUTT
@@ -698,15 +710,17 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             val cosA = cos(rad).toFloat()
             val sinA = sin(rad).toFloat()
             if (lit) {
-                strokePaint.strokeWidth = 9.5f
-                strokePaint.color = withAlpha(barCol, 68)
-                canvas.drawLine(cx + cosA * rIn, cy + sinA * rIn, cx + cosA * rOut, cy + sinA * rOut, strokePaint)
+                if (!lightMode) {
+                    strokePaint.strokeWidth = 9.5f
+                    strokePaint.color = withAlpha(barCol, 68)
+                    canvas.drawLine(cx + cosA * rIn, cy + sinA * rIn, cx + cosA * rOut, cy + sinA * rOut, strokePaint)
+                }
                 strokePaint.strokeWidth = 6.0f
                 strokePaint.color = barCol
                 canvas.drawLine(cx + cosA * rIn, cy + sinA * rIn, cx + cosA * rOut, cy + sinA * rOut, strokePaint)
             } else {
                 strokePaint.strokeWidth = 6.0f
-                strokePaint.color = withAlpha(barCol, 42)
+                strokePaint.color = withAlpha(barCol, if (lightMode) 48 else 42)
                 canvas.drawLine(cx + cosA * rIn, cy + sinA * rIn, cx + cosA * rOut, cy + sinA * rOut, strokePaint)
             }
         }
@@ -726,17 +740,18 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             textPaint.color = when {
                 isRight && i >= 6 -> danger
                 ratio >= 0.65f -> amber
+                lightMode -> Color.rgb(30, 48, 40)
                 else -> withAlpha(accentColor, 226)
             }
             canvas.drawText(labels[i], cx + cos(rad).toFloat() * 162f, cy + sin(rad).toFloat() * 162f + 6f, textPaint)
         }
 
-        // 3. Center VFD digital readout / album art
+        // 3. Center VFD / LCD digital readout / album art
         if (isRight && centerArtwork != null && !centerArtwork.isRecycled) {
             drawRoundedArtwork(canvas, cx, cy - 6f, 162f, 12f, centerArtwork, accentColor)
         } else {
             strokePaint.strokeWidth = 1.5f
-            strokePaint.color = withAlpha(accentColor, 85)
+            strokePaint.color = withAlpha(accentColor, if (lightMode) 120 else 85)
             rectF.set(cx - 104f, cy - 64f, cx + 104f, cy + 64f)
             canvas.drawRoundRect(rectF, 12f, 12f, strokePaint)
 
@@ -744,9 +759,11 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.typeface = monoBold
             textPaint.textSize = 90f
-            textPaint.color = withAlpha(accentColor, 72)
-            canvas.drawText(mainNum, cx, cy + 28f, textPaint)
-            textPaint.color = accentColor
+            if (!lightMode) {
+                textPaint.color = withAlpha(accentColor, 72)
+                canvas.drawText(mainNum, cx, cy + 28f, textPaint)
+            }
+            textPaint.color = if (lightMode) Color.rgb(18, 36, 28) else accentColor
             canvas.drawText(mainNum, cx, cy + 26f, textPaint)
 
             textPaint.textSize = 17f
@@ -767,6 +784,7 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             textPaint.textAlign = Paint.Align.LEFT
             canvas.drawText("F", startX + blocks * 15.5f + 4f, 434f, textPaint)
 
+            val dimBlock = if (lightMode) Color.argb(46, 30, 48, 40) else Color.argb(32, 255, 255, 255)
             for (i in 0 until blocks) {
                 fillPaint.color = if (i < lit) {
                     when {
@@ -775,13 +793,13 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
                         else -> accentColor
                     }
                 } else {
-                    Color.argb(32, 255, 255, 255)
+                    dimBlock
                 }
                 canvas.drawRect(startX + i * 15.5f, 420f, startX + i * 15.5f + 11f, 436f, fillPaint)
             }
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.textSize = 18f
-            textPaint.color = withAlpha(accentColor, 220)
+            textPaint.color = if (lightMode) Color.rgb(30, 48, 40) else withAlpha(accentColor, 220)
             val label = if (rawFuel != null) "FUEL ${rawFuel.roundToInt()}%" else "FUEL --%"
             canvas.drawText(label, cx, 408f, textPaint)
         } else {

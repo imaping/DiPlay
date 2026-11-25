@@ -36,7 +36,7 @@ internal enum class GeelyClusterThemeStyle(
     val displayName: String,
     val shortLabel: String,
     val description: String,
-    val supportsLightMode: Boolean = false,
+    val supportsLightMode: Boolean = true,
 ) {
     SPORT_CHRONO(
         displayName = "赛道计时 · 运动指针",
@@ -53,8 +53,8 @@ internal enum class GeelyClusterThemeStyle(
     AERO_MECHA(
         displayName = "机甲光翼 · 未来战术",
         shortLabel = "机甲光翼",
-        description = "战术切角双翼外框 + 28 格独立发光 LED 能量块 + 斜体数字",
-        supportsLightMode = false,
+        description = "战术切角双翼外框 + 28 格独立发光 LED 能量块 + 斜体数字（支持昼夜）",
+        supportsLightMode = true,
     ),
     NORDIC_GLASS(
         displayName = "北欧冰川 · 液态玻璃",
@@ -65,20 +65,20 @@ internal enum class GeelyClusterThemeStyle(
     RETRO_VFD(
         displayName = "复古微光 · 荧光液晶",
         shortLabel = "复古微光",
-        description = "80s VFD 荧光微点阵底 + 36 枚阶梯荧光柱 + 格栅复古油量条",
-        supportsLightMode = false,
+        description = "80s VFD 荧光微点阵底 + 36 枚阶梯荧光柱 + 格栅油量条（支持昼夜）",
+        supportsLightMode = true,
     ),
     ULTRA_CLASSIC_TICKS(
         displayName = "Ultra 精密刻度",
         shortLabel = "精密刻度",
-        description = "双圈精密长短刻度 + 扇区光带 + 右盘档位/RPM + 专辑氛围底",
-        supportsLightMode = false,
+        description = "双圈精密长短刻度 + 扇区光带 + 右盘档位/RPM（支持昼夜）",
+        supportsLightMode = true,
     ),
     ULTRA_MINIMAL_RING(
         displayName = "Ultra 极简光环",
         shortLabel = "极简光环",
-        description = "无数字磨砂厚光环 + 流畅主题色弧 + 极简档位与底部油量弧",
-        supportsLightMode = false,
+        description = "无数字磨砂厚光环 + 流畅主题色弧 + 极简档位与油量弧（支持昼夜）",
+        supportsLightMode = true,
     ),
     ULTRA_CLEAN_LIGHT(
         displayName = "Ultra 现代点刻（自适应昼夜）",
@@ -90,12 +90,12 @@ internal enum class GeelyClusterThemeStyle(
     fun defaultAccentColor(nightMode: Boolean): Int = when (this) {
         SPORT_CHRONO -> if (nightMode) 0xFFFF3B30.toInt() else 0xFFD92D20.toInt()
         HERITAGE_GOLD -> if (nightMode) 0xFFDEB973.toInt() else 0xFF8F6A2E.toInt()
-        AERO_MECHA -> 0xFF00E5FF.toInt()
+        AERO_MECHA -> if (nightMode) 0xFF00E5FF.toInt() else 0xFF0284C7.toInt()
         NORDIC_GLASS -> if (nightMode) 0xFF38BDF8.toInt() else 0xFF0369A1.toInt()
-        RETRO_VFD -> 0xFF2EE6A6.toInt()
+        RETRO_VFD -> if (nightMode) 0xFF2EE6A6.toInt() else 0xFF059669.toInt()
         ULTRA_CLASSIC_TICKS,
         ULTRA_MINIMAL_RING,
-        ULTRA_CLEAN_LIGHT -> GeelyColorTransition.DEFAULT_CYAN
+        ULTRA_CLEAN_LIGHT -> if (nightMode) GeelyColorTransition.DEFAULT_CYAN else 0xFF366A98.toInt()
     }
 
     companion object {

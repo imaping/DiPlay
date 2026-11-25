@@ -884,7 +884,7 @@ internal class GeelySelfDrawCanvasView(context: Context) : View(context) {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        nightMode = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        nightMode = GeelyClusterEnhancer.resolveEffectiveNightMode(config, context)
     }
 
     override fun onDraw(canvas: Canvas) {

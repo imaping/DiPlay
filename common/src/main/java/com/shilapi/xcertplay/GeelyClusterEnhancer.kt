@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
@@ -47,6 +48,7 @@ import com.shilapi.xcertplay.hud.ClusterTurnGuidance
 import com.shilapi.xcertplay.iap2.message.LaneGuidanceLane
 import com.shilapi.xcertplay.settings.SettingsTheme
 import com.shilapi.xcertplay.settings.SettingsWidgets
+import java.util.Calendar
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -67,12 +69,13 @@ internal object GeelyClusterEnhancer {
     private var activeDimController: GeelyDimMenuController? = null
     private var activeDimWatcher: GeelyDimLogcatWatcher? = null
     private var musicSubscription: (() -> Unit)? = null
+    private var hostNightObserverRemoval: (() -> Unit)? = null
 
     private var latestGuidance: ClusterTurnGuidance? = null
     @Volatile
     private var latestLanes: List<LaneGuidanceLane> = emptyList()
     private var isFullScreenPresentationActive: Boolean = false
-    private var systemNightMode: Boolean = false
+    private var presentationNightMode: Boolean? = null
     private var wasInPhoneCall: Boolean = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val callRecoveryTick = object : Runnable {
@@ -106,10 +109,66 @@ internal object GeelyClusterEnhancer {
             am.mode == AudioManager.MODE_RINGTONE
     }
 
-    fun resolveEffectiveNightMode(config: GeelySelfDrawConfig): Boolean = when (config.appearanceMode) {
-        GeelyClusterAppearanceMode.AUTO -> systemNightMode
+    fun resolveEffectiveNightMode(config: GeelySelfDrawConfig, context: Context? = null): Boolean = when (config.appearanceMode) {
         GeelyClusterAppearanceMode.DARK -> true
         GeelyClusterAppearanceMode.LIGHT -> false
+        GeelyClusterAppearanceMode.AUTO -> {
+            AppAppearanceRuntime.hostNight()
+                ?: presentationNightMode
+                ?: resolveConfiguredCarPlayNight(context ?: hostAppContext ?: activeFakeUltraView?.context)
+        }
+    }
+
+    private fun resolveConfiguredCarPlayNight(context: Context?): Boolean {
+        val ctx = context ?: return false
+        val systemNight = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        return when (AirPlayPersistence.loadCarPlayNightMode(ctx)) {
+            CarPlayNightMode.DAY -> false
+            CarPlayNightMode.NIGHT -> true
+            CarPlayNightMode.SCHEDULE -> {
+                val now = Calendar.getInstance()
+                val minuteOfDay = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+                AirPlayPersistence.loadCarPlayNightSchedule(ctx).isNight(minuteOfDay)
+            }
+            CarPlayNightMode.SYSTEM, CarPlayNightMode.AMBIENT -> systemNight
+        }
+    }
+
+    private fun ensureHostNightObserver() {
+        if (hostNightObserverRemoval != null) return
+        hostNightObserverRemoval = AppAppearanceRuntime.observeHost { night ->
+            if (night != null) {
+                presentationNightMode = night
+            }
+            val ctx = hostAppContext ?: activeFakeUltraView?.context ?: return@observeHost
+            runOnMain { applyEffectiveNight(ctx) }
+        }
+    }
+
+    private fun runOnMain(action: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action()
+        } else {
+            mainHandler.post(action)
+        }
+    }
+
+    private fun applyEffectiveNight(context: Context) {
+        val cfg = GeelyClusterPrefs.load(context)
+        val effective = resolveEffectiveNightMode(cfg, context)
+        activeFakeUltraView?.apply {
+            nightMode = effective
+            invalidate()
+        }
+        activePresentationSelfDrawView?.apply {
+            nightMode = effective
+            invalidate()
+        }
+        overlayWindow?.view?.apply {
+            nightMode = effective
+            invalidate()
+        }
     }
 
     fun requestFullScreenMap(context: Context, reason: String = "manual"): Boolean {
@@ -179,6 +238,7 @@ internal object GeelyClusterEnhancer {
             CarPlayGlance.laneListener = laneListenerHook
         }
         GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
+        ensureHostNightObserver()
         syncStandaloneOverlayWindow(app)
     }
 
@@ -188,6 +248,8 @@ internal object GeelyClusterEnhancer {
             CarPlayGlance.laneListener = previousLaneListener
             previousLaneListener = null
         }
+        hostNightObserverRemoval?.invoke()
+        hostNightObserverRemoval = null
         hostAppContext?.let { app ->
             runCatching { GeelyClusterPrefs.prefs(app).unregisterOnSharedPreferenceChangeListener(prefsListener) }
         }
@@ -252,8 +314,8 @@ internal object GeelyClusterEnhancer {
 
         val config = GeelyClusterPrefs.load(context)
         val is1080 = GeelyVehicleDetector.isComposite1080Display(display)
-        systemNightMode = nightMode
-        val effectiveNight = resolveEffectiveNightMode(config)
+        presentationNightMode = nightMode
+        val effectiveNight = resolveEffectiveNightMode(config, context)
 
         // Keep Presentation window & bottom Y:720..1080 hardware crop zone strictly TRANSPARENT
         // so returning to Classic Cluster (Mode 1) NEVER leaves an opaque black rectangle in the card slot!
@@ -351,6 +413,7 @@ internal object GeelyClusterEnhancer {
         }
         isFullScreenPresentationActive = true
         GeelyClusterPrefs.prefs(context).registerOnSharedPreferenceChangeListener(prefsListener)
+        ensureHostNightObserver()
 
         musicSubscription?.invoke()
         musicSubscription = ClusterMusicState.observe { snapshot ->
@@ -401,27 +464,50 @@ internal object GeelyClusterEnhancer {
 
     /** Called when day/night mode changes on `ClusterMapPresentation`. */
     fun onNightModeChanged(night: Boolean) {
-        systemNightMode = night
+        presentationNightMode = night
         val ctx = hostAppContext ?: activeFakeUltraView?.context
-        val effective = if (ctx != null) resolveEffectiveNightMode(GeelyClusterPrefs.load(ctx)) else night
-        activeFakeUltraView?.nightMode = effective
-        activePresentationSelfDrawView?.nightMode = effective
-        overlayWindow?.view?.nightMode = effective
+        runOnMain {
+            val effective = if (ctx != null) resolveEffectiveNightMode(GeelyClusterPrefs.load(ctx), ctx) else night
+            activeFakeUltraView?.apply {
+                nightMode = effective
+                invalidate()
+            }
+            activePresentationSelfDrawView?.apply {
+                nightMode = effective
+                invalidate()
+            }
+            overlayWindow?.view?.apply {
+                nightMode = effective
+                invalidate()
+            }
+        }
     }
 
     fun refreshConfig(context: Context) {
-        val cfg = GeelyClusterPrefs.load(context)
-        val effectiveNight = resolveEffectiveNightMode(cfg)
-        activeFakeUltraView?.config = cfg
-        activeFakeUltraView?.nightMode = effectiveNight
-        activePresentationSelfDrawView?.config = cfg
-        activePresentationSelfDrawView?.nightMode = effectiveNight
-        syncStockClusterViewsVisibility(activePresentationInnerRoot, cfg)
-        syncStandaloneOverlayWindow(context.applicationContext)
-        overlayWindow?.view?.config = cfg
-        overlayWindow?.view?.nightMode = effectiveNight
-        activePresentationSelfDrawView?.visibility =
-            if (overlayWindow?.attached == true) View.INVISIBLE else View.VISIBLE
+        val appCtx = context.applicationContext
+        runOnMain {
+            val cfg = GeelyClusterPrefs.load(appCtx)
+            val effectiveNight = resolveEffectiveNightMode(cfg, appCtx)
+            activeFakeUltraView?.apply {
+                config = cfg
+                nightMode = effectiveNight
+                invalidate()
+            }
+            activePresentationSelfDrawView?.apply {
+                config = cfg
+                nightMode = effectiveNight
+                invalidate()
+            }
+            syncStockClusterViewsVisibility(activePresentationInnerRoot, cfg)
+            syncStandaloneOverlayWindow(appCtx)
+            overlayWindow?.view?.apply {
+                config = cfg
+                nightMode = effectiveNight
+                invalidate()
+            }
+            activePresentationSelfDrawView?.visibility =
+                if (overlayWindow?.attached == true) View.INVISIBLE else View.VISIBLE
+        }
     }
 
     private fun syncStandaloneOverlayWindow(appContext: Context) {
@@ -439,7 +525,7 @@ internal object GeelyClusterEnhancer {
             closeStandaloneOverlayWindow()
             return
         }
-        val effectiveNight = resolveEffectiveNightMode(cfg)
+        val effectiveNight = resolveEffectiveNightMode(cfg, appContext)
         val currentWindow = overlayWindow
         if (currentWindow != null && currentWindow.attached &&
             currentWindow.display.displayId == targetDisplay.displayId
@@ -564,7 +650,7 @@ private class GeelyCompositePreviewView(context: Context) : View(context) {
         canvas.scale(scale, scale)
 
         // 1. Upper 1920x720 simulated map background
-        val previewNight = GeelyClusterEnhancer.resolveEffectiveNightMode(config)
+        val previewNight = GeelyClusterEnhancer.resolveEffectiveNightMode(config, context)
         bgPaint.color = if (previewNight) Color.rgb(16, 26, 36) else Color.rgb(218, 226, 235)
         canvas.drawRect(0f, 0f, 1920f, 720f, bgPaint)
 
@@ -929,7 +1015,13 @@ private class GeelyClusterSettingsPanel(
                 bottomMargin = dp(6)
             },
         )
-        val appearanceBtn = createActionButton("仪表昼夜模式：${config.appearanceMode.displayName}  (点击切换)") {
+        val effectiveNightNow = GeelyClusterEnhancer.resolveEffectiveNightMode(config, activity)
+        val autoHint = if (config.appearanceMode == GeelyClusterAppearanceMode.AUTO) {
+            if (effectiveNightNow) "·当前深色" else "·当前浅色"
+        } else {
+            ""
+        }
+        val appearanceBtn = createActionButton("仪表昼夜模式：${config.appearanceMode.displayName}$autoHint  (点击切换)") {
             val modes = GeelyClusterAppearanceMode.entries
             val next = modes[(config.appearanceMode.ordinal + 1) % modes.size]
             config = config.copy(appearanceMode = next, mapThemeDark = next != GeelyClusterAppearanceMode.LIGHT)
@@ -1122,7 +1214,12 @@ private class GeelyClusterSettingsPanel(
         val quickRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
         }
-        val btnTheme = createActionButton("昼夜：${config.appearanceMode.shortLabel}") {
+        val effectiveNightPreview = GeelyClusterEnhancer.resolveEffectiveNightMode(config, activity)
+        val previewNightLabel = when (config.appearanceMode) {
+            GeelyClusterAppearanceMode.AUTO -> if (effectiveNightPreview) "自动(深)" else "自动(浅)"
+            else -> config.appearanceMode.shortLabel
+        }
+        val btnTheme = createActionButton("昼夜：$previewNightLabel") {
             val modes = GeelyClusterAppearanceMode.entries
             val next = modes[(config.appearanceMode.ordinal + 1) % modes.size]
             config = config.copy(appearanceMode = next, mapThemeDark = next != GeelyClusterAppearanceMode.LIGHT)

@@ -1001,7 +1001,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             invalidate()
         }
 
-    var nightMode: Boolean = isSystemNightMode(context)
+    var nightMode: Boolean = GeelyClusterEnhancer.resolveEffectiveNightMode(config, context)
         set(value) {
             if (field != value) {
                 field = value
@@ -1095,7 +1095,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        nightMode = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        nightMode = GeelyClusterEnhancer.resolveEffectiveNightMode(config, context)
     }
 
     private fun updatePollingState() {
@@ -1152,10 +1152,16 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                 dominantAlbumColor ?: themeStyle.defaultAccentColor(nightMode)
             }
         }
-        colorTransition.updateTarget(targetAccent, nowElapsed)
-        val currentAccent = colorTransition.colorAt(nowElapsed)
-        if (colorTransition.isAnimating(nowElapsed)) {
-            needsNextFrame = true
+        val currentAccent = if (previewMode) {
+            colorTransition.reset()
+            colorTransition.updateTarget(targetAccent, nowElapsed)
+            targetAccent
+        } else {
+            colorTransition.updateTarget(targetAccent, nowElapsed)
+            if (colorTransition.isAnimating(nowElapsed)) {
+                needsNextFrame = true
+            }
+            colorTransition.colorAt(nowElapsed)
         }
 
         // 1. Background / Vignette / Standby Backdrop
@@ -1300,10 +1306,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     }
 
     companion object {
-        private fun isSystemNightMode(context: Context): Boolean =
-            (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES
-
         /** 3-pass separable box blur on 192x72 downsampled bitmap matching `Lpa0;` / `Lqa0;`. */
         fun createBoxBlurredBitmap(source: Bitmap, width: Int = 192, height: Int = 72, radius: Int = 14): Bitmap? =
             runCatching {
