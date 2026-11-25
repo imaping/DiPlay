@@ -1,12 +1,11 @@
 package com.shilapi.xcertplay
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.graphics.Bitmap
+import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
@@ -15,6 +14,7 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.net.Uri
@@ -33,15 +33,20 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.WindowInsetsControllerCompat
 import com.shilapi.xcertplay.glance.CarPlayGlance
+import com.shilapi.xcertplay.host.R
 import com.shilapi.xcertplay.hud.BydNavigationOutputs
 import com.shilapi.xcertplay.hud.ClusterTurnGuidance
 import com.shilapi.xcertplay.iap2.message.LaneGuidanceLane
+import com.shilapi.xcertplay.settings.SettingsTheme
+import com.shilapi.xcertplay.settings.SettingsWidgets
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -465,6 +470,39 @@ internal object GeelyClusterEnhancer {
         overlayWindow = null
     }
 
+    internal const val SETTINGS_CARD_TITLE = "吉利 Fake Ultra 仪表与自绘 HUD"
+    internal var lastSelectedSettingsTab: Int = 0
+    internal var lastPreviewRouteActive: Boolean = true
+
+    /**
+     * Appends the Geely Fake Ultra & Self-Draw HUD configuration card into the unified
+     * Instrument Cluster settings page, themed with the main UI's [palette].
+     */
+    fun appendSettingsCard(
+        activity: Activity,
+        parent: LinearLayout,
+        palette: DiPlayPalette,
+        searchIndexSink: MutableList<String>? = null,
+        onStateChanged: () -> Unit = {},
+    ) {
+        if (!GeelyVehicleDetector.isGeelyOrEcarx(activity)) return
+        searchIndexSink?.add(SETTINGS_CARD_TITLE)
+        if (searchIndexSink != null) return
+        val card = GeelyClusterSettingsPanel(
+            activity = activity,
+            colors = GeelyClusterUiColors.from(palette),
+            onStateChanged = onStateChanged,
+        ).buildInlineCard()
+        val gap = (16 * activity.resources.displayMetrics.density).roundToInt()
+        parent.addView(
+            card,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = gap },
+        )
+    }
+
     /** Opens the standalone Geely Fake Ultra & Self-Draw HUD configuration dialog (Choice 2 A). */
     fun showSettingsDialog(activity: Activity, onDismiss: () -> Unit = {}) {
         GeelyClusterSettingsDialog(activity, onDismiss).show()
@@ -591,163 +629,198 @@ private class GeelyCompositePreviewView(context: Context) : View(context) {
     }
 }
 
-/**
- * Standalone configuration dialog for Geely Fake Ultra Dials & Self-Draw HUD/Navigation Cards.
- */
-internal class GeelyClusterSettingsDialog(
-    private val activity: Activity,
-    private val onDismiss: () -> Unit = {},
+/** Semantic colors for Geely cluster settings UI, derived from DiPlay's active light/dark palette. */
+private data class GeelyClusterUiColors(
+    val palette: DiPlayPalette,
+    val isNight: Boolean,
 ) {
-    private var config: GeelySelfDrawConfig = GeelyClusterPrefs.load(activity)
-    private var selectedTab: Int = 0
-    private var previewRouteActive: Boolean = true
+    val background: Int get() = palette.background
+    val surface: Int get() = palette.surface
+    val itemSurface: Int get() = if (isNight) Color.rgb(26, 37, 54) else Color.rgb(239, 244, 250)
+    val previewFrame: Int get() = if (isNight) Color.rgb(12, 17, 27) else Color.rgb(224, 231, 241)
+    val button: Int get() = palette.button
+    val outline: Int get() = palette.outline
+    val selectedSurface: Int get() = palette.railSelected
+    val selectedOutline: Int get() = palette.railSelectedOutline
+    val primaryText: Int get() = palette.primaryText
+    val secondaryText: Int get() = palette.secondaryText
+    val accent: Int get() = palette.accent
+    val onAccent: Int get() = palette.onAccent
+    val ripple: Int get() = palette.ripple
+    val switchTheme: SettingsTheme get() = SettingsTheme.card(palette)
+
+    companion object {
+        fun from(palette: DiPlayPalette): GeelyClusterUiColors {
+            val night = palette === DiPlayPalette.DARK || palette.background == DiPlayPalette.DARK.background
+            return GeelyClusterUiColors(palette, night)
+        }
+
+        fun resolve(activity: Activity): GeelyClusterUiColors {
+            val night = (activity as? AppAppearanceOwner)?.currentAppNight ?: activity.resolveAppNightNow()
+            return GeelyClusterUiColors(DiPlayPalette.of(night), night)
+        }
+    }
+}
+
+/**
+ * Shared Geely Fake Ultra & Self-Draw HUD settings panel controller used by both:
+ * 1. The inline card inside the unified Instrument Cluster settings page
+ * 2. The fullscreen [GeelyClusterSettingsDialog]
+ */
+private class GeelyClusterSettingsPanel(
+    private val activity: Activity,
+    private val colors: GeelyClusterUiColors,
+    private val onStateChanged: () -> Unit = {},
+) {
+    var config: GeelySelfDrawConfig = GeelyClusterPrefs.load(activity)
+        private set
+    var selectedTab: Int
+        get() = GeelyClusterEnhancer.lastSelectedSettingsTab.coerceIn(0, TAB_TITLES.lastIndex)
+        set(value) {
+            GeelyClusterEnhancer.lastSelectedSettingsTab = value.coerceIn(0, TAB_TITLES.lastIndex)
+        }
+    private var previewRouteActive: Boolean
+        get() = GeelyClusterEnhancer.lastPreviewRouteActive
+        set(value) {
+            GeelyClusterEnhancer.lastPreviewRouteActive = value
+        }
+
     private var previewView: GeelyCompositePreviewView? = null
     private var statusTextView: TextView? = null
     private var tabContentContainer: LinearLayout? = null
-    private var rightScrollView: ScrollView? = null
+    private var scrollToTopCallback: (() -> Unit)? = null
     private val tabButtons = ArrayList<Button>()
-    private val dimController = GeelyDimMenuController(activity)
 
-    fun show() {
-        val dialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-        dialog.setOnDismissListener { onDismiss() }
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.rgb(12, 17, 27)))
-
-        val root = LinearLayout(activity).apply {
+    fun buildInlineCard(): LinearLayout {
+        val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(12, 17, 27))
-            setPadding(dp(18), dp(10), dp(18), dp(10))
+            background = roundedBox(colors.surface, colors.outline, cornerDp = 20)
+            setPadding(dp(24), dp(24), dp(24), dp(24))
         }
 
-        // 1. Compact Header Bar (fits 1920x720 wide head-unit displays cleanly)
-        val header = LinearLayout(activity).apply {
+        val heading = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dp(8))
         }
-        val backBtn = createActionButton("‹ 返回") {
-            dialog.dismiss()
-        }
-        header.addView(backBtn, LinearLayout.LayoutParams(dp(104), dp(42)))
-
-        val titleCol = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), 0, dp(14), 0)
-        }
-        titleCol.addView(
-            TextView(activity).apply {
-                text = "仪表与导航显示 (Fake Ultra · 设置自动保存)"
-                setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17.5f)
-                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-                maxLines = 1
-            }
+        heading.addView(
+            ImageView(activity).apply {
+                setImageResource(R.drawable.ic_dp_dashboard)
+                imageTintList = ColorStateList.valueOf(colors.accent)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(12) },
         )
+        heading.addView(
+            TextView(activity).apply {
+                text = GeelyClusterEnhancer.SETTINGS_CARD_TITLE
+                setTextColor(colors.primaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        card.addView(heading)
+
         val statusTv = TextView(activity).apply {
-            setTextColor(Color.rgb(156, 182, 206))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            maxLines = 1
+            setTextColor(colors.secondaryText)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(0, 0, 0, dp(12))
         }
         statusTextView = statusTv
-        titleCol.addView(statusTv)
-        header.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(statusTv)
 
-        val resetBtn = createActionButton("恢复 HUD 默认布局") {
-            config = GeelyClusterPrefs.resetAreasToDefault(activity)
-            onConfigUpdated()
-            rebuildTabContent()
-            Toast.makeText(activity, "已恢复 HUD 与导航卡片默认布局", Toast.LENGTH_SHORT).show()
-        }
-        header.addView(resetBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42)))
-        root.addView(header)
-
-        // 2. Main Body: Original-APK style Left Vertical Sidebar Menu + Right Scrollable Settings Panel
-        val body = LinearLayout(activity).apply {
+        val actionRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(10), 0, 0)
+            setPadding(0, 0, 0, dp(12))
         }
-
-        // Left Sidebar Menu (Scrollable vertical list — never clipped on 1920x720 screens!)
-        val sidebarScroll = ScrollView(activity).apply {
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(18, 25, 38))
-                cornerRadius = dp(12).toFloat()
-                setStroke(dp(1), Color.rgb(38, 52, 74))
+        val fullscreenBtn = createActionButton("全屏配置与预览") {
+            GeelyClusterEnhancer.showSettingsDialog(activity) {
+                onStateChanged()
             }
         }
-        val sidebarCol = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+        val resetBtn = createActionButton("恢复 HUD 默认布局") {
+            resetAreasToDefault()
         }
-        val tabTitles = listOf(
-            "仪表显示",
-            "导航卡片",
-            "抬头显示 (HUD)",
-            "效果预览",
-            "权限与兼容",
-        )
+        actionRow.addView(fullscreenBtn, LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginEnd = dp(10) })
+        actionRow.addView(resetBtn, LinearLayout.LayoutParams(0, dp(46), 1f))
+        card.addView(actionRow)
+
+        val tabScroll = HorizontalScrollView(activity).apply {
+            isHorizontalScrollBarEnabled = false
+            setPadding(0, 0, 0, dp(12))
+        }
+        val tabStrip = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
         tabButtons.clear()
-        for (i in tabTitles.indices) {
-            val btn = createActionButton(tabTitles[i]) {
-                selectedTab = i
-                updateTabButtonStyles()
-                rebuildTabContent()
-                rightScrollView?.scrollTo(0, 0)
+        for (i in TAB_TITLES.indices) {
+            val btn = createActionButton(TAB_TITLES[i]) {
+                selectTab(i)
             }.apply {
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                setPadding(dp(14), dp(6), dp(12), dp(6))
+                setPadding(dp(16), dp(6), dp(16), dp(6))
             }
             tabButtons.add(btn)
-            sidebarCol.addView(
+            tabStrip.addView(
                 btn,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
-                    if (i > 0) topMargin = dp(8)
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply {
+                    if (i > 0) marginStart = dp(8)
                 },
             )
         }
-        sidebarScroll.addView(sidebarCol)
-        body.addView(
-            sidebarScroll,
-            LinearLayout.LayoutParams(dp(200), ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                rightMargin = dp(14)
-            },
-        )
+        tabScroll.addView(tabStrip)
+        card.addView(tabScroll)
 
-        // Right Panel: Scrollable Settings Content
-        val rightScroll = ScrollView(activity).apply {
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(18, 25, 38))
-                cornerRadius = dp(12).toFloat()
-                setStroke(dp(1), Color.rgb(38, 52, 74))
-            }
-        }
-        rightScrollView = rightScroll
         val contentCol = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(12), dp(18), dp(20))
         }
         tabContentContainer = contentCol
-        rightScroll.addView(contentCol)
-        body.addView(rightScroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-
-        root.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        card.addView(contentCol)
 
         updateStatusText()
         updateTabButtonStyles()
         rebuildTabContent()
-
-        dialog.setContentView(root)
-        dialog.show()
+        return card
     }
 
-    private fun onConfigUpdated() {
+    fun bindDialogViews(
+        statusView: TextView,
+        tabBtns: List<Button>,
+        contentContainer: LinearLayout,
+        onScrollToTop: () -> Unit,
+    ) {
+        statusTextView = statusView
+        tabButtons.clear()
+        tabButtons.addAll(tabBtns)
+        tabContentContainer = contentContainer
+        scrollToTopCallback = onScrollToTop
+        updateStatusText()
+        updateTabButtonStyles()
+        rebuildTabContent()
+    }
+
+    fun selectTab(index: Int) {
+        selectedTab = index
+        updateTabButtonStyles()
+        rebuildTabContent()
+        scrollToTopCallback?.invoke()
+    }
+
+    fun resetAreasToDefault() {
+        config = GeelyClusterPrefs.resetAreasToDefault(activity)
+        onConfigUpdated()
+        rebuildTabContent()
+        Toast.makeText(activity, "已恢复 HUD 与导航卡片默认布局", Toast.LENGTH_SHORT).show()
+    }
+
+    fun onConfigUpdated() {
         GeelyClusterPrefs.save(activity, config)
         GeelyClusterEnhancer.refreshConfig(activity)
         previewView?.config = config
         updateStatusText()
     }
 
-    private fun updateStatusText() {
+    fun updateStatusText() {
         val display = GeelyVehicleDetector.findClusterDisplay(activity)
         val dispInfo = if (display != null) {
             val size = ClusterMapPresentation.sizeOf(display)
@@ -760,17 +833,14 @@ internal class GeelyClusterSettingsDialog(
         statusTextView?.text = "$dispInfo · $overlayOk · $topCardStatus"
     }
 
-    private fun updateTabButtonStyles() {
+    fun updateTabButtonStyles() {
         for (i in tabButtons.indices) {
             val selected = i == selectedTab
-            tabButtons[i].background = GradientDrawable().apply {
-                setColor(if (selected) Color.rgb(24, 155, 134) else Color.rgb(27, 39, 57))
-                cornerRadius = dp(10).toFloat()
-            }
+            styleButton(tabButtons[i], selected = selected)
         }
     }
 
-    private fun rebuildTabContent() {
+    fun rebuildTabContent() {
         val container = tabContentContainer ?: return
         container.removeAllViews()
         previewView = null
@@ -789,15 +859,19 @@ internal class GeelyClusterSettingsDialog(
             val selected = config.dialThemeStyle == style
             val card = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(12), dp(8), dp(12), dp(8))
-                background = GradientDrawable().apply {
-                    setColor(if (selected) Color.rgb(20, 62, 66) else Color.rgb(24, 34, 50))
-                    cornerRadius = dp(10).toFloat()
-                    setStroke(
-                        dp(if (selected) 2 else 1),
-                        if (selected) Color.rgb(24, 203, 170) else Color.rgb(42, 58, 82),
-                    )
-                }
+                isClickable = true
+                isFocusable = true
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = RippleDrawable(
+                    ColorStateList.valueOf(colors.ripple),
+                    roundedBox(
+                        fill = if (selected) colors.selectedSurface else colors.itemSurface,
+                        stroke = if (selected) colors.selectedOutline else colors.outline,
+                        cornerDp = 12,
+                        strokeDp = if (selected) 2 else 1,
+                    ),
+                    null,
+                )
                 setOnClickListener {
                     if (config.dialThemeStyle != style) {
                         config = config.copy(dialThemeStyle = style)
@@ -809,17 +883,17 @@ internal class GeelyClusterSettingsDialog(
             card.addView(
                 TextView(activity).apply {
                     text = if (selected) "●  ${style.displayName}（当前使用）" else "○  ${style.displayName}"
-                    setTextColor(if (selected) Color.rgb(122, 245, 224) else Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                    setTextColor(if (selected) colors.accent else colors.primaryText)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                     typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
                 }
             )
             card.addView(
                 TextView(activity).apply {
                     text = style.description
-                    setTextColor(Color.rgb(168, 190, 212))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setPadding(dp(18), dp(2), 0, 0)
+                    setTextColor(colors.secondaryText)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setPadding(dp(18), dp(3), 0, 0)
                 }
             )
             container.addView(
@@ -851,7 +925,7 @@ internal class GeelyClusterSettingsDialog(
         }
         container.addView(
             modeBtn,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
                 topMargin = dp(4)
                 bottomMargin = dp(6)
             },
@@ -865,7 +939,7 @@ internal class GeelyClusterSettingsDialog(
         }
         container.addView(
             appearanceBtn,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
                 topMargin = dp(2)
                 bottomMargin = dp(6)
             },
@@ -1006,11 +1080,7 @@ internal class GeelyClusterSettingsDialog(
     private fun buildPreviewTab(container: LinearLayout) {
         addSectionTitle(container, "仪表效果预览")
         val previewCard = FrameLayout(activity).apply {
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(12, 17, 27))
-                cornerRadius = dp(10).toFloat()
-                setStroke(dp(1), Color.rgb(42, 58, 82))
-            }
+            background = roundedBox(colors.previewFrame, colors.outline, cornerDp = 12)
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
         val pv = GeelyCompositePreviewView(activity).also {
@@ -1027,7 +1097,6 @@ internal class GeelyClusterSettingsDialog(
             },
         )
 
-        // Quick 4-theme switcher right under the live preview canvas
         val themeRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 0, 0, dp(8))
@@ -1040,21 +1109,14 @@ internal class GeelyClusterSettingsDialog(
         )
         for ((idx, style) in GeelyClusterThemeStyle.entries.withIndex()) {
             val active = config.dialThemeStyle == style
-            val btn = createActionButton(shortLabels[style] ?: style.displayName) {
+            val btn = createActionButton(shortLabels[style] ?: style.displayName, selected = active) {
                 config = config.copy(dialThemeStyle = style)
                 onConfigUpdated()
                 rebuildTabContent()
-            }.apply {
-                if (active) {
-                    background = GradientDrawable().apply {
-                        setColor(Color.rgb(24, 155, 134))
-                        cornerRadius = dp(10).toFloat()
-                    }
-                }
             }
             themeRow.addView(
                 btn,
-                LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+                LinearLayout.LayoutParams(0, dp(42), 1f).apply {
                     if (idx > 0) leftMargin = dp(6)
                 },
             )
@@ -1128,7 +1190,7 @@ internal class GeelyClusterSettingsDialog(
         }
         container.addView(
             permBtn,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
                 topMargin = dp(6)
                 bottomMargin = dp(10)
             },
@@ -1138,13 +1200,13 @@ internal class GeelyClusterSettingsDialog(
         }
         container.addView(
             selectDispBtn,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)),
         )
         container.addView(
             TextView(activity).apply {
                 text = "允许悬浮窗权限可提高独立导航输出的兼容性，在经典仪表模式下也能持续为原车 W-HUD 与经典仪表小卡提供导航源。"
-                setTextColor(Color.rgb(156, 182, 206))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setPadding(0, dp(10), 0, 0)
             }
         )
@@ -1154,10 +1216,10 @@ internal class GeelyClusterSettingsDialog(
         container.addView(
             TextView(activity).apply {
                 text = title
-                setTextColor(Color.rgb(24, 203, 170))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                setTextColor(colors.accent)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                 typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-                setPadding(0, dp(10), 0, dp(4))
+                setPadding(0, dp(12), 0, dp(6))
             }
         )
     }
@@ -1169,45 +1231,27 @@ internal class GeelyClusterSettingsDialog(
         checked: Boolean,
         onChanged: (Boolean) -> Unit,
     ) {
-        val row = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(24, 34, 50))
-                cornerRadius = dp(10).toFloat()
-            }
-        }
-        val textCol = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        textCol.addView(
-            TextView(activity).apply {
-                text = title
-                setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
-                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            }
+        val rowResult = SettingsWidgets.createSwitchRow(
+            context = activity,
+            label = title,
+            description = subtitle.orEmpty(),
+            checked = checked,
+            theme = colors.switchTheme,
+            contentDescription = title,
+            labelSizeSp = 15.5f,
+            onChanged = onChanged,
         )
-        if (!subtitle.isNullOrBlank()) {
-            textCol.addView(
-                TextView(activity).apply {
-                    text = subtitle
-                    setTextColor(Color.rgb(160, 182, 204))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setPadding(0, dp(2), dp(10), 0)
-                }
+        val wrapper = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBox(colors.itemSurface, colors.outline, cornerDp = 12)
+            setPadding(dp(14), dp(2), dp(14), dp(2))
+            addView(
+                rowResult.rowView,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
             )
         }
-        val sw = Switch(activity).apply {
-            isChecked = checked
-            setOnCheckedChangeListener { _, isChecked -> onChanged(isChecked) }
-        }
-        row.setOnClickListener { sw.toggle() }
-        row.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(sw, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         container.addView(
-            row,
+            wrapper,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(4)
                 bottomMargin = dp(4)
@@ -1223,17 +1267,14 @@ internal class GeelyClusterSettingsDialog(
     ) {
         val box = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(24, 34, 50))
-                cornerRadius = dp(10).toFloat()
-            }
-            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = roundedBox(colors.itemSurface, colors.outline, cornerDp = 12)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
         }
         box.addView(
             TextView(activity).apply {
                 text = "$label\n当前: X=${area.x}, Y=${area.y}, 宽=${area.width}, 高=${area.height}"
-                setTextColor(Color.rgb(210, 226, 242))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextColor(colors.primaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
             }
         )
 
@@ -1249,9 +1290,9 @@ internal class GeelyClusterSettingsDialog(
         val upBtn = createActionButton("Y-4") { onAreaChanged(area.copy(y = area.y - 4)) }
         val downBtn = createActionButton("Y+4") { onAreaChanged(area.copy(y = area.y + 4)) }
 
-        row.addView(editBtn, LinearLayout.LayoutParams(0, dp(40), 1.6f))
+        row.addView(editBtn, LinearLayout.LayoutParams(0, dp(42), 1.6f))
         for (b in listOf(leftBtn, rightBtn, upBtn, downBtn)) {
-            row.addView(b, LinearLayout.LayoutParams(0, dp(40), 0.7f).apply { leftMargin = dp(4) })
+            row.addView(b, LinearLayout.LayoutParams(0, dp(42), 0.7f).apply { leftMargin = dp(4) })
         }
         box.addView(row)
         container.addView(
@@ -1268,7 +1309,8 @@ internal class GeelyClusterSettingsDialog(
         current: GeelyOverlayArea,
         onSaved: (GeelyOverlayArea) -> Unit,
     ) {
-        val layout = LinearLayout(activity).apply {
+        val dialogContext = activity.appDialogContext()
+        val layout = LinearLayout(dialogContext).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(12), dp(20), dp(8))
         }
@@ -1279,16 +1321,23 @@ internal class GeelyClusterSettingsDialog(
             "高度 Height" to current.height,
         )
         val inputs = fields.map { (hint, value) ->
-            EditText(activity).apply {
+            EditText(dialogContext).apply {
                 this.hint = hint
                 setText(value.toString())
+                setTextColor(colors.primaryText)
+                setHintTextColor(colors.secondaryText)
                 inputType = InputType.TYPE_CLASS_NUMBER
             }.also { et ->
-                layout.addView(TextView(activity).apply { text = hint })
+                layout.addView(
+                    TextView(dialogContext).apply {
+                        text = hint
+                        setTextColor(colors.secondaryText)
+                    }
+                )
                 layout.addView(et)
             }
         }
-        AlertDialog.Builder(activity)
+        activity.appDialogBuilder()
             .setTitle(title)
             .setView(layout)
             .setNegativeButton("取消", null)
@@ -1317,7 +1366,7 @@ internal class GeelyClusterSettingsDialog(
             val m = d.mode
             "屏幕 ID=${d.displayId} (${m?.physicalWidth ?: 0}×${m?.physicalHeight ?: 0})"
         }.toTypedArray()
-        AlertDialog.Builder(activity)
+        activity.appDialogBuilder()
             .setTitle("选择仪表屏幕")
             .setItems(labels) { _, which ->
                 val chosen = displays[which]
@@ -1329,24 +1378,187 @@ internal class GeelyClusterSettingsDialog(
             .show()
     }
 
-    private fun createActionButton(text: String, onClick: () -> Unit): Button =
+    fun createActionButton(text: String, selected: Boolean = false, onClick: () -> Unit): Button =
         Button(activity).apply {
             this.text = text
             isAllCaps = false
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(27, 39, 57))
-                cornerRadius = dp(10).toFloat()
-            }
-            setPadding(dp(10), dp(4), dp(10), dp(4))
+            stateListAnimator = null
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            styleButton(this, selected = selected)
             setOnClickListener { onClick() }
+        }
+
+    fun styleButton(button: Button, selected: Boolean) {
+        button.setTextColor(if (selected) colors.accent else colors.primaryText)
+        button.typeface = Typeface.create("sans-serif-medium", if (selected) Typeface.BOLD else Typeface.NORMAL)
+        button.background = RippleDrawable(
+            ColorStateList.valueOf(colors.ripple),
+            roundedBox(
+                fill = if (selected) colors.selectedSurface else colors.button,
+                stroke = if (selected) colors.selectedOutline else colors.outline,
+                cornerDp = 12,
+                strokeDp = 1,
+            ),
+            null,
+        )
+    }
+
+    fun roundedBox(fill: Int, stroke: Int, cornerDp: Int = 12, strokeDp: Int = 1): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(cornerDp).toFloat()
+            setStroke(dp(strokeDp), stroke)
         }
 
     private fun colorModeLabel(mode: GeelyDialColorMode): String = when (mode) {
         GeelyDialColorMode.DEFAULT -> "默认青色 (#18CBAA)"
         GeelyDialColorMode.SPEED -> "随车速四段渐变"
         GeelyDialColorMode.ALBUM -> "随专辑封面主色"
+    }
+
+    private fun dp(value: Int): Int =
+        (value * activity.resources.displayMetrics.density).roundToInt()
+
+    companion object {
+        val TAB_TITLES = listOf(
+            "仪表显示",
+            "导航卡片",
+            "抬头显示 (HUD)",
+            "效果预览",
+            "权限与兼容",
+        )
+    }
+}
+
+/**
+ * Standalone configuration dialog for Geely Fake Ultra Dials & Self-Draw HUD/Navigation Cards,
+ * following DiPlay's active light/dark appearance palette.
+ */
+internal class GeelyClusterSettingsDialog(
+    private val activity: Activity,
+    private val onDismiss: () -> Unit = {},
+) {
+    private val colors = GeelyClusterUiColors.resolve(activity)
+    private val panel = GeelyClusterSettingsPanel(activity, colors)
+
+    fun show() {
+        val themeRes = if (colors.isNight) {
+            android.R.style.Theme_Black_NoTitleBar_Fullscreen
+        } else {
+            android.R.style.Theme_Light_NoTitleBar_Fullscreen
+        }
+        val dialog = Dialog(activity, themeRes)
+        dialog.setOnDismissListener { onDismiss() }
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(colors.background))
+            statusBarColor = colors.palette.systemBar
+            navigationBarColor = colors.palette.systemBar
+            WindowInsetsControllerCompat(this, decorView).apply {
+                isAppearanceLightStatusBars = colors.palette.systemBarIconsAreDark
+                isAppearanceLightNavigationBars = colors.palette.systemBarIconsAreDark
+            }
+        }
+
+        val root = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(colors.background)
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+        }
+
+        // 1. Compact Header Bar (fits 1920x720 wide head-unit displays cleanly)
+        val header = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val backBtn = panel.createActionButton("‹ 返回") {
+            dialog.dismiss()
+        }
+        header.addView(backBtn, LinearLayout.LayoutParams(dp(104), dp(42)))
+
+        val titleCol = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), 0, dp(14), 0)
+        }
+        titleCol.addView(
+            TextView(activity).apply {
+                text = "仪表与导航显示 (Fake Ultra · 设置自动保存)"
+                setTextColor(colors.primaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17.5f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+                maxLines = 1
+            }
+        )
+        val statusTv = TextView(activity).apply {
+            setTextColor(colors.secondaryText)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            maxLines = 1
+        }
+        titleCol.addView(statusTv)
+        header.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val resetBtn = panel.createActionButton("恢复 HUD 默认布局") {
+            panel.resetAreasToDefault()
+        }
+        header.addView(resetBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42)))
+        root.addView(header)
+
+        // 2. Main Body: Left Vertical Sidebar Menu + Right Scrollable Settings Panel
+        val body = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(10), 0, 0)
+        }
+
+        val sidebarScroll = ScrollView(activity).apply {
+            background = panel.roundedBox(colors.surface, colors.outline, cornerDp = 12)
+        }
+        val sidebarCol = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+        }
+        val tabButtons = ArrayList<Button>()
+        for (i in GeelyClusterSettingsPanel.TAB_TITLES.indices) {
+            val btn = panel.createActionButton(GeelyClusterSettingsPanel.TAB_TITLES[i]) {
+                panel.selectTab(i)
+            }.apply {
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setPadding(dp(14), dp(6), dp(12), dp(6))
+            }
+            tabButtons.add(btn)
+            sidebarCol.addView(
+                btn,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                    if (i > 0) topMargin = dp(8)
+                },
+            )
+        }
+        sidebarScroll.addView(sidebarCol)
+        body.addView(
+            sidebarScroll,
+            LinearLayout.LayoutParams(dp(200), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                rightMargin = dp(14)
+            },
+        )
+
+        val rightScroll = ScrollView(activity).apply {
+            background = panel.roundedBox(colors.surface, colors.outline, cornerDp = 12)
+        }
+        val contentCol = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(12), dp(18), dp(20))
+        }
+        rightScroll.addView(contentCol)
+        body.addView(rightScroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+
+        root.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        panel.bindDialogViews(statusTv, tabButtons, contentCol) {
+            rightScroll.scrollTo(0, 0)
+        }
+
+        dialog.setContentView(root)
+        dialog.show()
     }
 
     private fun dp(value: Int): Int =

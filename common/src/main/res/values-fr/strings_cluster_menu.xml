@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_cluster">Tableau de bord</string>
+    <string name="settings_cluster_summary">Carte du combiné, cadrans et affichage tête haute</string>
+</resources>

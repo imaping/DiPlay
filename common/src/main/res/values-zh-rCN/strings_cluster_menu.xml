@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_cluster">仪表盘</string>
+    <string name="settings_cluster_summary">仪表盘地图、Fake Ultra 仪表与自绘 HUD</string>
+</resources>

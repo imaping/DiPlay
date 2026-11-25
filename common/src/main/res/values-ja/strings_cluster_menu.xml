@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_cluster">メーター</string>
+    <string name="settings_cluster_summary">メーターマップ、カスタムメーターとHUD</string>
+</resources>

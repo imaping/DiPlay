@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_cluster">Cụm đồng hồ</string>
+    <string name="settings_cluster_summary">Bản đồ cụm đồng hồ, mặt đồng hồ và HUD</string>
+</resources>
