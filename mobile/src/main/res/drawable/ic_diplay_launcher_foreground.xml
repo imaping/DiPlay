@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer C arc: centered at (54, 54), radius 24.5, opening ±36° on the right, fits inside 66dp safe zone -->
+    <path
+        android:pathData="M73.82,39.60 A24.5,24.5 0 1,0 73.82,68.40"
+        android:strokeWidth="5.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="54"
+                android:startY="27"
+                android:endX="54"
+                android:endY="81"
+                android:type="linear">
+                <item android:color="#FFFFFFFF" android:offset="0.0" />
+                <item android:color="#FFE8FFF0" android:offset="0.55" />
+                <item android:color="#FFC9FADB" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Center rounded play triangle -->
+    <path android:pathData="M48.2,46.8 L48.2,61.2 Q48.2,63.6 50.29,62.42 L63.11,55.18 Q65.2,54.0 63.11,52.82 L50.29,45.58 Q48.2,44.4 48.2,46.8 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="54"
+                android:startY="44"
+                android:endX="54"
+                android:endY="64"
+                android:type="linear">
+                <item android:color="#FFFFFFFF" android:offset="0.0" />
+                <item android:color="#FFD8FCE6" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
