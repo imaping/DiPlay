@@ -293,7 +293,14 @@ internal object GeelySelfDrawRenderer {
                 area.y < GeelyOverlayArea.VIDEO_HEIGHT &&
                 area.width >= 600
             withClippedArea(canvas, area) { w, h ->
-                drawCardGradientBackground(canvas, w.toFloat(), h.toFloat(), cardBaseColor, nightMode)
+                drawCardGradientBackground(
+                    canvas,
+                    w.toFloat(),
+                    h.toFloat(),
+                    cardBaseColor,
+                    nightMode,
+                    opaqueClassic = !isFullWidthInSingleSlot,
+                )
                 if (isFullWidthInSingleSlot) {
                     if (drawFullscreenCardContent(
                             canvas = canvas,
@@ -344,7 +351,7 @@ internal object GeelySelfDrawRenderer {
             }
         }
 
-        // 4. Standalone Lane Guidance Bar (when laneX/laneY configured or in fullscreen map mode)
+        // 4. Standalone Lane Guidance Bar (when laneX/laneY configured or attached below fullscreen card)
         if (config.laneEnabled && activeLanes.isNotEmpty()) {
             val laneCount = activeLanes.size.coerceIn(1, 12)
             val laneBoxWidth = (laneCount * 54).coerceIn(140, 648)
@@ -352,7 +359,7 @@ internal object GeelySelfDrawRenderer {
             val laneArea: GeelyOverlayArea? = when {
                 config.laneX != null && config.laneY != null ->
                     GeelyOverlayArea(config.laneX, config.laneY, laneBoxWidth, laneBoxHeight).clamp()
-                fullScreen || isPreview -> {
+                config.fullscreenCardEnabled && (fullScreen || isPreview) -> {
                     val anchor = config.fullscreenCardArea
                     val lx = anchor.x + (anchor.width - laneBoxWidth) / 2
                     val ly = (anchor.bottom + 8).coerceAtMost(GeelyOverlayArea.VIDEO_HEIGHT - laneBoxHeight - 8)
@@ -551,11 +558,12 @@ internal object GeelySelfDrawRenderer {
         h: Float,
         baseColor: Int,
         nightMode: Boolean,
+        opaqueClassic: Boolean = false,
     ) {
         val rgb = baseColor and 0x00FFFFFF
-        val topAlpha = if (nightMode) 216 else 235
-        val midAlpha = if (nightMode) 182 else 210
-        val botAlpha = if (nightMode) 148 else 185
+        val topAlpha = if (opaqueClassic) 252 else if (nightMode) 216 else 235
+        val midAlpha = if (opaqueClassic) 246 else if (nightMode) 182 else 210
+        val botAlpha = if (opaqueClassic) 238 else if (nightMode) 148 else 185
         cardBgPaint.shader = LinearGradient(
             0f,
             0f,

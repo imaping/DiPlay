@@ -505,6 +505,7 @@ internal class GeelyClusterSettingsDialog(
     private var previewView: GeelyCompositePreviewView? = null
     private var statusTextView: TextView? = null
     private var tabContentContainer: LinearLayout? = null
+    private var rightScrollView: ScrollView? = null
     private val tabButtons = ArrayList<Button>()
     private val dimController = GeelyDimMenuController(activity)
 
@@ -517,124 +518,103 @@ internal class GeelyClusterSettingsDialog(
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(12, 17, 27))
-            setPadding(dp(20), dp(14), dp(20), dp(14))
+            setPadding(dp(18), dp(10), dp(18), dp(10))
         }
 
-        // 1. Header Bar
+        // 1. Compact Header Bar (fits 1920x720 wide head-unit displays cleanly)
         val header = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val backBtn = createActionButton("‹ 返回设置") {
+        val backBtn = createActionButton("‹ 返回") {
             dialog.dismiss()
         }
-        header.addView(backBtn, LinearLayout.LayoutParams(dp(128), dp(46)))
+        header.addView(backBtn, LinearLayout.LayoutParams(dp(104), dp(42)))
 
         val titleCol = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), 0, dp(16), 0)
+            setPadding(dp(14), 0, dp(14), 0)
         }
         titleCol.addView(
             TextView(activity).apply {
-                text = "吉利全液晶仪表 (Fake Ultra) 与自绘 HUD 设置"
+                text = "仪表与导航显示 (Fake Ultra · 设置自动保存)"
                 setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17.5f)
                 typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+                maxLines = 1
             }
         )
         val statusTv = TextView(activity).apply {
             setTextColor(Color.rgb(156, 182, 206))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            maxLines = 1
         }
         statusTextView = statusTv
         titleCol.addView(statusTv)
         header.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        val resetBtn = createActionButton("恢复默认坐标") {
+        val resetBtn = createActionButton("恢复 HUD 默认布局") {
             config = GeelyClusterPrefs.resetAreasToDefault(activity)
             onConfigUpdated()
             rebuildTabContent()
-            Toast.makeText(activity, "已恢复吉利星越L / OneOS 默认坐标", Toast.LENGTH_SHORT).show()
+            Toast.makeText(activity, "已恢复 HUD 与导航卡片默认布局", Toast.LENGTH_SHORT).show()
         }
-        header.addView(resetBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(46)))
+        header.addView(resetBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42)))
         root.addView(header)
 
-        // 2. Main Body: Left Preview + Category Tabs, Right Scrollable Controls
+        // 2. Main Body: Original-APK style Left Vertical Sidebar Menu + Right Scrollable Settings Panel
         val body = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(12), 0, 0)
+            setPadding(0, dp(10), 0, 0)
         }
 
-        // Left Column (Live 1920x1080 Composite Canvas Preview + Quick Mode Buttons)
-        val leftCol = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 0, dp(16), 0)
-        }
-        val previewCard = FrameLayout(activity).apply {
+        // Left Sidebar Menu (Scrollable vertical list — never clipped on 1920x720 screens!)
+        val sidebarScroll = ScrollView(activity).apply {
             background = GradientDrawable().apply {
                 setColor(Color.rgb(18, 25, 38))
                 cornerRadius = dp(12).toFloat()
-                setStroke(dp(1), Color.rgb(42, 58, 82))
+                setStroke(dp(1), Color.rgb(38, 52, 74))
             }
-            setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-        val pv = GeelyCompositePreviewView(activity).also {
-            it.config = config
-            previewView = it
+        val sidebarCol = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
         }
-        previewCard.addView(pv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(230)))
-        leftCol.addView(previewCard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        // Quick Action Row under preview
-        val quickRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(10), 0, 0)
-        }
-        val btnEnterMap = createActionButton("切全屏地图 (Mode 3)") {
-            val ok = dimController.enterFullScreenMap()
-            Toast.makeText(
-                activity,
-                if (ok) "已发送 switchNaviMode(3)" else "车机 DimMenuInteraction 不可用",
-                Toast.LENGTH_SHORT,
-            ).show()
-        }
-        val btnExitMap = createActionButton("回经典仪表 (Mode 1)") {
-            val ok = dimController.restoreClassicCluster()
-            Toast.makeText(
-                activity,
-                if (ok) "已发送 switchNaviMode(1)" else "车机 DimMenuInteraction 不可用",
-                Toast.LENGTH_SHORT,
-            ).show()
-        }
-        quickRow.addView(btnEnterMap, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(6) })
-        quickRow.addView(btnExitMap, LinearLayout.LayoutParams(0, dp(44), 1f).apply { leftMargin = dp(6) })
-        leftCol.addView(quickRow)
-
-        // Category Tab Bar
-        val tabRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(10), 0, 0)
-        }
-        val tabTitles = listOf("仪表双圆盘", "导航卡片", "自绘 HUD", "屏幕与权限")
+        val tabTitles = listOf(
+            "仪表显示",
+            "导航卡片",
+            "抬头显示 (HUD)",
+            "效果预览",
+            "权限与兼容",
+        )
         tabButtons.clear()
         for (i in tabTitles.indices) {
             val btn = createActionButton(tabTitles[i]) {
                 selectedTab = i
                 updateTabButtonStyles()
                 rebuildTabContent()
+                rightScrollView?.scrollTo(0, 0)
+            }.apply {
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setPadding(dp(14), dp(6), dp(12), dp(6))
             }
             tabButtons.add(btn)
-            tabRow.addView(
+            sidebarCol.addView(
                 btn,
-                LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                    if (i > 0) leftMargin = dp(6)
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                    if (i > 0) topMargin = dp(8)
                 },
             )
         }
-        leftCol.addView(tabRow)
-        body.addView(leftCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.15f))
+        sidebarScroll.addView(sidebarCol)
+        body.addView(
+            sidebarScroll,
+            LinearLayout.LayoutParams(dp(200), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                rightMargin = dp(14)
+            },
+        )
 
-        // Right Column: Scrollable Settings List
+        // Right Panel: Scrollable Settings Content
         val rightScroll = ScrollView(activity).apply {
             background = GradientDrawable().apply {
                 setColor(Color.rgb(18, 25, 38))
@@ -642,9 +622,10 @@ internal class GeelyClusterSettingsDialog(
                 setStroke(dp(1), Color.rgb(38, 52, 74))
             }
         }
+        rightScrollView = rightScroll
         val contentCol = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(18))
+            setPadding(dp(18), dp(12), dp(18), dp(20))
         }
         tabContentContainer = contentCol
         rightScroll.addView(contentCol)
@@ -670,13 +651,14 @@ internal class GeelyClusterSettingsDialog(
     private fun updateStatusText() {
         val display = GeelyVehicleDetector.findClusterDisplay(activity)
         val dispInfo = if (display != null) {
-            val m = display.mode
-            "仪表屏 ID=${display.displayId} (${m?.physicalWidth ?: 0}×${m?.physicalHeight ?: 0})"
+            val size = ClusterMapPresentation.sizeOf(display)
+            "仪表屏 ID=${display.displayId} (${size.x}×${size.y})"
         } else {
             "未检测到副屏 (默认 ID=${config.preferredDisplayId})"
         }
-        val overlayOk = if (Settings.canDrawOverlays(activity)) "2038悬浮窗已授权" else "悬浮窗未授权(回退Presentation)"
-        statusTextView?.text = "$dispInfo · $overlayOk · 配色: ${colorModeLabel(config.dialColorMode)}"
+        val overlayOk = if (Settings.canDrawOverlays(activity)) "悬浮窗已授权" else "悬浮窗未授权"
+        val topCardStatus = if (config.fullscreenCardEnabled) "全屏导航卡:开" else "全屏导航卡:关"
+        statusTextView?.text = "$dispInfo · $overlayOk · $topCardStatus"
     }
 
     private fun updateTabButtonStyles() {
@@ -692,59 +674,29 @@ internal class GeelyClusterSettingsDialog(
     private fun rebuildTabContent() {
         val container = tabContentContainer ?: return
         container.removeAllViews()
+        previewView = null
         when (selectedTab) {
             0 -> buildDialTab(container)
             1 -> buildCardsTab(container)
             2 -> buildHudTab(container)
-            3 -> buildDisplayAndPermissionTab(container)
+            3 -> buildPreviewTab(container)
+            4 -> buildDisplayAndPermissionTab(container)
         }
     }
 
     private fun buildDialTab(container: LinearLayout) {
-        addSectionTitle(container, "Fake Ultra 矢量双圆盘与视觉")
+        addSectionTitle(container, "仪表组件")
         addSwitchRow(
             container = container,
-            title = "显示左圆盘（车速 0..240 km/h + 燃油百分比）",
-            checked = config.dialLeftEnabled,
+            title = "显示圆盘仪表",
+            subtitle = "统一开启或隐藏左右两个圆盘；也可以通过下面的开关单独选择。",
+            checked = config.dialLeftEnabled || config.dialRightEnabled,
         ) { checked ->
-            config = config.copy(dialLeftEnabled = checked)
+            config = config.copy(dialLeftEnabled = checked, dialRightEnabled = checked)
             onConfigUpdated()
+            rebuildTabContent()
         }
-        addSwitchRow(
-            container = container,
-            title = "显示右圆盘（转速 0..8 ×1000rpm + 水温 °C）",
-            checked = config.dialRightEnabled,
-        ) { checked ->
-            config = config.copy(dialRightEnabled = checked)
-            onConfigUpdated()
-        }
-        addSwitchRow(
-            container = container,
-            title = "专辑封面联动（非导航全屏模糊背景+居中封面 / 导航时嵌于右表盘圆心）",
-            checked = config.albumArtEnabled,
-        ) { checked ->
-            config = config.copy(albumArtEnabled = checked)
-            onConfigUpdated()
-        }
-        addSwitchRow(
-            container = container,
-            title = "底部状态栏（时间 · 平均油耗 L/100km · 水温 °C）",
-            checked = config.bottomBarEnabled,
-        ) { checked ->
-            config = config.copy(bottomBarEnabled = checked)
-            onConfigUpdated()
-        }
-        addSwitchRow(
-            container = container,
-            title = "地图边缘明暗渐变遮罩（Vignette）",
-            checked = config.mapVignetteEnabled,
-        ) { checked ->
-            config = config.copy(mapVignetteEnabled = checked)
-            onConfigUpdated()
-        }
-
-        addSectionTitle(container, "表盘主题色模式（800ms 平滑过渡）")
-        val modeBtn = createActionButton("当前配色模式：${colorModeLabel(config.dialColorMode)}  (点击切换)") {
+        val modeBtn = createActionButton("仪表配色：${colorModeLabel(config.dialColorMode)}  (点击切换)") {
             val modes = GeelyDialColorMode.entries
             val next = modes[(config.dialColorMode.ordinal + 1) % modes.size]
             config = config.copy(dialColorMode = next)
@@ -753,66 +705,131 @@ internal class GeelyClusterSettingsDialog(
         }
         container.addView(
             modeBtn,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(6) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(6)
+            },
         )
+        addSwitchRow(
+            container = container,
+            title = "左侧圆盘仪表",
+            subtitle = "时速（0..240 km/h）＋燃油百分比。",
+            checked = config.dialLeftEnabled,
+        ) { checked ->
+            config = config.copy(dialLeftEnabled = checked)
+            onConfigUpdated()
+        }
+        addSwitchRow(
+            container = container,
+            title = "右侧圆盘仪表",
+            subtitle = "转速＋水温；导航时中心显示圆角专辑封面，不可用数据以 — 显示。",
+            checked = config.dialRightEnabled,
+        ) { checked ->
+            config = config.copy(dialRightEnabled = checked)
+            onConfigUpdated()
+        }
+        addSwitchRow(
+            container = container,
+            title = "底部状态栏",
+            subtitle = "在仪表底部居中显示当前时间、平均油耗与水温。",
+            checked = config.bottomBarEnabled,
+        ) { checked ->
+            config = config.copy(bottomBarEnabled = checked)
+            onConfigUpdated()
+        }
+
+        addSectionTitle(container, "CarPlay 专辑封面")
+        addSwitchRow(
+            container = container,
+            title = "非导航时显示专辑封面",
+            subtitle = "非导航时显示上下居中的全宽模糊封面背景及中央圆角封面；导航开始或没有封面时显示地图。",
+            checked = config.albumArtEnabled,
+        ) { checked ->
+            config = config.copy(albumArtEnabled = checked)
+            onConfigUpdated()
+        }
+
+        addSectionTitle(container, "地图视觉")
+        addSwitchRow(
+            container = container,
+            title = "地图主题遮罩",
+            subtitle = "使用专属明暗遮罩覆盖地图上下及两侧，保留中间透明地图窗口。",
+            checked = config.mapVignetteEnabled,
+        ) { checked ->
+            config = config.copy(mapVignetteEnabled = checked)
+            onConfigUpdated()
+        }
     }
 
     private fun buildCardsTab(container: LinearLayout) {
-        addSectionTitle(container, "经典仪表与全屏地图导航卡片")
+        addSectionTitle(container, "仪表导航提示")
         addSwitchRow(
             container = container,
-            title = "启用经典仪表导航卡裁剪源 (Y: 720..1080)",
-            checked = config.cardEnabled,
-        ) { checked ->
-            config = config.copy(cardEnabled = checked)
-            onConfigUpdated()
-        }
-        addAreaEditorCard(
-            container = container,
-            label = "经典仪表卡区域 (默认 1165, 720, 364×112)",
-            area = config.cardArea,
-        ) { updated ->
-            config = config.copy(cardArea = updated.clamp())
-            onConfigUpdated()
-            rebuildTabContent()
-        }
-
-        addSwitchRow(
-            container = container,
-            title = "启用全屏地图顶部大导航卡（含剩余距离与预计到达时间 ETA）",
+            title = "全屏导航卡片",
+            subtitle = "全屏地图顶部显示转向、距离、道路与剩余行程（关闭即可隐藏顶部导航条）。",
             checked = config.fullscreenCardEnabled,
         ) { checked ->
             config = config.copy(fullscreenCardEnabled = checked)
             onConfigUpdated()
         }
+        addSwitchRow(
+            container = container,
+            title = "仪表导航卡片",
+            subtitle = "普通经典仪表模式下显示转向、距离和道路（Y: 720..1080 裁剪源）。",
+            checked = config.cardEnabled,
+        ) { checked ->
+            config = config.copy(cardEnabled = checked)
+            onConfigUpdated()
+        }
+        addSwitchRow(
+            container = container,
+            title = "车道提示",
+            subtitle = "同时用于 HUD 与全屏导航卡片；没有车道数据时自动隐藏。",
+            checked = config.laneEnabled,
+        ) { checked ->
+            config = config.copy(laneEnabled = checked)
+            onConfigUpdated()
+        }
+
+        addSectionTitle(container, "导航卡片位置微调")
         addAreaEditorCard(
             container = container,
-            label = "全屏导航卡区域 (默认 595, 118, 728×112)",
+            label = "全屏导航卡片区域 (默认 595, 118, 728×112)",
             area = config.fullscreenCardArea,
         ) { updated ->
             config = config.copy(fullscreenCardArea = updated.clamp())
             onConfigUpdated()
             rebuildTabContent()
         }
-
-        addSwitchRow(
+        addAreaEditorCard(
             container = container,
-            title = "启用 iAP2 (0x5204) 车道线转向引导阵列",
-            checked = config.laneEnabled,
-        ) { checked ->
-            config = config.copy(laneEnabled = checked)
+            label = "经典仪表卡片区域 (默认 1165, 720, 364×112)",
+            area = config.cardArea,
+        ) { updated ->
+            config = config.copy(cardArea = updated.clamp())
             onConfigUpdated()
+            rebuildTabContent()
         }
     }
 
     private fun buildHudTab(container: LinearLayout) {
-        addSectionTitle(container, "吉利原车 W-HUD 抬头显示自绘裁剪源")
+        addSectionTitle(container, "抬头显示 (W-HUD)")
         addSwitchRow(
             container = container,
-            title = "启用自绘 W-HUD 投射源 (Y: 720..1080 区域硬件截屏投射)",
+            title = "HUD 导航提示",
+            subtitle = "行驶时在原车抬头显示中查看转向、距离和道路（Y: 720..1080 硬件裁剪源）。",
             checked = config.hudEnabled,
         ) { checked ->
             config = config.copy(hudEnabled = checked)
+            onConfigUpdated()
+        }
+        addSwitchRow(
+            container = container,
+            title = "车道提示",
+            subtitle = "同时用于 HUD 与全屏导航卡片；没有车道数据时自动隐藏。",
+            checked = config.laneEnabled,
+        ) { checked ->
+            config = config.copy(laneEnabled = checked)
             onConfigUpdated()
         }
         addAreaEditorCard(
@@ -824,40 +841,77 @@ internal class GeelyClusterSettingsDialog(
             onConfigUpdated()
             rebuildTabContent()
         }
+    }
 
-        addSectionTitle(container, "实车常驻模拟预览")
+    private fun buildPreviewTab(container: LinearLayout) {
+        addSectionTitle(container, "仪表效果预览")
+        val previewCard = FrameLayout(activity).apply {
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(12, 17, 27))
+                cornerRadius = dp(10).toFloat()
+                setStroke(dp(1), Color.rgb(42, 58, 82))
+            }
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        val pv = GeelyCompositePreviewView(activity).also {
+            it.config = config
+            previewView = it
+        }
+        previewCard.addView(pv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(260)))
+        container.addView(
+            previewCard,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(10)
+            },
+        )
+
+        val quickRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val btnTheme = createActionButton(if (config.mapThemeDark) "切换预览明暗主题（当前深色）" else "切换预览明暗主题（当前浅色）") {
+            config = config.copy(mapThemeDark = !config.mapThemeDark)
+            onConfigUpdated()
+            rebuildTabContent()
+        }
+        val btnEnterMap = createActionButton("切全屏地图 (Mode 3)") {
+            val ok = dimController.enterFullScreenMap()
+            Toast.makeText(
+                activity,
+                if (ok) "已发送 switchNaviMode(3)" else "车机 DimMenuInteraction 不可用",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        val btnExitMap = createActionButton("回经典仪表 (Mode 1)") {
+            val ok = dimController.restoreClassicCluster()
+            Toast.makeText(
+                activity,
+                if (ok) "已发送 switchNaviMode(1)" else "车机 DimMenuInteraction 不可用",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        quickRow.addView(btnTheme, LinearLayout.LayoutParams(0, dp(44), 1.3f).apply { rightMargin = dp(6) })
+        quickRow.addView(btnEnterMap, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(6) })
+        quickRow.addView(btnExitMap, LinearLayout.LayoutParams(0, dp(44), 1f))
+        container.addView(quickRow)
+
         addSwitchRow(
             container = container,
-            title = "在实车仪表与 W-HUD 上显示模拟导航数据（调校位置时开启）",
+            title = "在实车仪表与 HUD 上显示模拟预览",
+            subtitle = "未开始导航时在实车仪表和 HUD 上输出演示数据，便于校准裁剪坐标。",
             checked = config.previewEnabled,
         ) { checked ->
             config = config.copy(previewEnabled = checked)
             onConfigUpdated()
         }
-        addSwitchRow(
-            container = container,
-            title = "预览画布使用深色地图底色",
-            checked = config.mapThemeDark,
-        ) { checked ->
-            config = config.copy(mapThemeDark = checked)
-            onConfigUpdated()
-        }
     }
 
     private fun buildDisplayAndPermissionTab(container: LinearLayout) {
-        addSectionTitle(container, "仪表 Display 与 2038 独立悬浮窗权限")
-        val selectDispBtn = createActionButton("选择目标仪表屏幕 (当前优先 ID=${config.preferredDisplayId})") {
-            showDisplayPickerDialog()
-        }
-        container.addView(
-            selectDispBtn,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(6) },
-        )
-
+        addSectionTitle(container, "输出权限与仪表屏幕")
         val hasOverlay = Settings.canDrawOverlays(activity)
         val permBtn = createActionButton(
-            if (hasOverlay) "悬浮窗权限已开启 (支持经典仪表下独立投射 W-HUD 与小卡)"
-            else "前往开启悬浮窗权限 (TYPE_APPLICATION_OVERLAY 2038)"
+            if (hasOverlay) "悬浮窗权限已开启 · 管理悬浮窗权限"
+            else "管理悬浮窗权限 (允许 TYPE_APPLICATION_OVERLAY 2038)"
         ) {
             runCatching {
                 val intent = Intent(
@@ -866,12 +920,30 @@ internal class GeelyClusterSettingsDialog(
                 )
                 activity.startActivity(intent)
             }.onFailure {
-                Toast.makeText(activity, "无法打开系统悬浮窗权限页", Toast.LENGTH_SHORT).show()
+                Toast.makeText(activity, "车机未提供此权限页面", Toast.LENGTH_SHORT).show()
             }
         }
         container.addView(
             permBtn,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(10) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                topMargin = dp(6)
+                bottomMargin = dp(10)
+            },
+        )
+        val selectDispBtn = createActionButton("选择仪表屏幕 (当前优先 ID=${config.preferredDisplayId})") {
+            showDisplayPickerDialog()
+        }
+        container.addView(
+            selectDispBtn,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)),
+        )
+        container.addView(
+            TextView(activity).apply {
+                text = "允许悬浮窗权限可提高独立导航输出的兼容性，在经典仪表模式下也能持续为原车 W-HUD 与经典仪表小卡提供导航源。"
+                setTextColor(Color.rgb(156, 182, 206))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setPadding(0, dp(10), 0, 0)
+            }
         )
     }
 
@@ -890,18 +962,54 @@ internal class GeelyClusterSettingsDialog(
     private fun addSwitchRow(
         container: LinearLayout,
         title: String,
+        subtitle: String? = null,
         checked: Boolean,
         onChanged: (Boolean) -> Unit,
     ) {
+        val row = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(24, 34, 50))
+                cornerRadius = dp(10).toFloat()
+            }
+        }
+        val textCol = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        textCol.addView(
+            TextView(activity).apply {
+                text = title
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            }
+        )
+        if (!subtitle.isNullOrBlank()) {
+            textCol.addView(
+                TextView(activity).apply {
+                    text = subtitle
+                    setTextColor(Color.rgb(160, 182, 204))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setPadding(0, dp(2), dp(10), 0)
+                }
+            )
+        }
         val sw = Switch(activity).apply {
-            text = title
             isChecked = checked
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            minHeight = dp(46)
             setOnCheckedChangeListener { _, isChecked -> onChanged(isChecked) }
         }
-        container.addView(sw, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        row.setOnClickListener { sw.toggle() }
+        row.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(sw, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        container.addView(
+            row,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(4)
+            },
+        )
     }
 
     private fun addAreaEditorCard(
