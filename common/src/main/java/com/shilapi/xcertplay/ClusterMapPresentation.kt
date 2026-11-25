@@ -162,7 +162,8 @@ internal class ClusterMapPresentation(
             alpha = if (streamActive) 0f else 1f
             visibility = if (streamActive) View.GONE else View.VISIBLE
         }
-        setContentView(ClusterDashboardView(context, root, FrameLayout.LayoutParams(videoParams)).also {
+        val mapRoot = GeelyClusterEnhancer.attachToPresentation(this, display, root, dark)
+        setContentView(ClusterDashboardView(context, mapRoot, FrameLayout.LayoutParams(videoParams)).also {
             dashboard = it
             it.setOutputVisible(mapVisible)
         })
@@ -170,6 +171,7 @@ internal class ClusterMapPresentation(
 
     override fun onStart() {
         super.onStart()
+        GeelyClusterEnhancer.onPresentationStarted(context, display)
         // On the Geely head unit the cluster keeps its factory layer over Android's display 2
         // until the DIM service is asked to project; the stock map does the same.
         if (!GeelyClusterDisplay.supported()) return
@@ -183,6 +185,7 @@ internal class ClusterMapPresentation(
     }
 
     override fun onStop() {
+        GeelyClusterEnhancer.onPresentationStopped()
         if (GeelyClusterDisplay.supported()) {
             projectionHandler.removeCallbacks(projectionTick)
             // Hand the projection back only while DiPlay still holds it. The switch is head-unit-wide
@@ -234,6 +237,7 @@ internal class ClusterMapPresentation(
 
     fun setTurnCardNightMode(night: Boolean) {
         turnCardView?.setNightMode(night)
+        GeelyClusterEnhancer.onNightModeChanged(night)
     }
 
     fun setTurnCardOpacity(percent: Int) {
@@ -264,10 +268,13 @@ internal class ClusterMapPresentation(
                 // Never replace a missing 5.1 side layer with a full-screen display.
                 if (DiLink51ClusterLayout.supported()) return null
                 if (GeelyClusterDisplay.supported()) {
-                    return displays.firstOrNull { display ->
+                    displays.firstOrNull { display ->
                         val size = sizeOf(display)
                         GeelyClusterDisplay.matches(display, size.x, size.y)
-                    }
+                    }?.let { return it }
+                }
+                if (GeelyVehicleDetector.isGeelyOrEcarx(context)) {
+                    GeelyVehicleDetector.findClusterDisplay(context)?.let { return it }
                 }
                 return displays.firstOrNull { display ->
                     val size = sizeOf(display)

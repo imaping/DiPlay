@@ -904,6 +904,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         }
         NavigationWidgetUpdater.attach(applicationContext)
         CarPlayCallKeys.install(applicationContext)
+        GeelyClusterEnhancer.attachHost(this, ::appendLog)
         CenterMapOverlay.requestShow = ::showCenterMap
         MapMirrors.sink = mirrorSink
         MapMirrors.onChanged = mirrorsChanged
@@ -1566,6 +1567,7 @@ open class CarPlayHostActivity : ComponentActivity() {
             presentation.setTurnCardNightMode(effectiveNight)
             presentation.setTurnCardGuidance(if (overlay) clusterTurnGuidance else null)
         }
+        GeelyClusterEnhancer.onTurnGuidanceUpdated(this, clusterTurnGuidance, presentations.isNotEmpty())
     }
     private fun dismissClusterPresentation() {
         ClusterActivityOutput.stop(this)
@@ -1655,7 +1657,8 @@ open class CarPlayHostActivity : ComponentActivity() {
             val size = ClusterMapPresentation.sizeOf(display)
             if (size.x > 0 && size.y > 0) {
                 clusterStreamOnDisplay = true
-                if (GeelyClusterDisplay.supported() && GeelyClusterDisplay.matches(display, size.x, size.y)) {
+                if ((GeelyClusterDisplay.supported() && GeelyClusterDisplay.matches(display, size.x, size.y)) ||
+                    GeelyClusterEnhancer.matchesClusterStream(this, display, size.x, size.y)) {
                     // Geely's cluster panel is the stream: no scale presets, the safe area carries the readouts.
                     return GeelyClusterDisplay.streamConfig(
                         AirPlayPersistence.loadClusterContent(this),
@@ -2063,6 +2066,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         }
         if (MapMirrors.onChanged === mirrorsChanged) MapMirrors.onChanged = null
         stopPlayerSettings?.invoke(); stopPlayerSettings = null
+        GeelyClusterEnhancer.detachHost()
         dismissClusterPresentation()
         mainHandler.removeCallbacks(applyDisplaySize)
         mainHandler.removeCallbacks(recheckSizeAfterVideoPlayer)

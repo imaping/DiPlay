@@ -2263,7 +2263,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             // A cluster whose stream is the whole panel: the safe area describes what the cluster
             // keeps visible, so the scale presets and the BYD small/full-navi stream pause do not apply.
             val fullPanelCluster = diLink4 || (clusterDisplay != null && clusterSize != null &&
-                GeelyClusterDisplay.supported() && GeelyClusterDisplay.matches(clusterDisplay, clusterSize.x, clusterSize.y))
+                ((GeelyClusterDisplay.supported() && GeelyClusterDisplay.matches(clusterDisplay, clusterSize.x, clusterSize.y)) ||
+                    GeelyClusterEnhancer.matchesClusterStream(this, clusterDisplay, clusterSize.x, clusterSize.y)))
             val clusterMapEnabled = AirPlayPersistence.loadClusterMapEnabled(this)
             reconnectingToggle(card, getString(R.string.carplay_map_on_instrument_cluster_experimental),
                 if (clusterDisplay != null || adbCluster) getString(R.string.shows_the_iphone_s_cluster_map_on_the_instrument_cluster_c)
@@ -2271,6 +2272,11 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 clusterMapEnabled) {
                 AirPlayPersistence.saveClusterMapEnabled(this, it)
                 render()
+            }
+            if (GeelyVehicleDetector.isGeelyOrEcarx(this)) {
+                card.addView(button(GeelyClusterEnhancer.settingsEntryLabel(this), false) {
+                    GeelyClusterEnhancer.showSettingsDialog(this) { render() }
+                }, settingsButtonLayout())
             }
             if (clusterMapEnabled) {
                 val physicalCluster = clusterDisplay != null || adbCluster || diLink3
