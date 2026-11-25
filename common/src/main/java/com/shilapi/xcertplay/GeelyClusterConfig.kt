@@ -18,6 +18,47 @@ internal enum class GeelyDialColorMode {
     }
 }
 
+internal enum class GeelyClusterAppearanceMode(
+    val displayName: String,
+    val shortLabel: String,
+) {
+    AUTO("跟随 CarPlay 昼夜", "自动"),
+    DARK("始终深色（夜间）", "深色"),
+    LIGHT("始终浅色（日间）", "浅色");
+
+    companion object {
+        fun fromName(raw: String?): GeelyClusterAppearanceMode =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: AUTO
+    }
+}
+
+internal enum class GeelyClusterThemeStyle(
+    val displayName: String,
+    val description: String,
+) {
+    FAKE_ULTRA(
+        displayName = "Fake Ultra 机械矢量",
+        description = "经典深色矢量双圆盘（0..240 km/h · 0..8k 转速 · 扫描光环）",
+    ),
+    ULTRA_CLASSIC_TICKS(
+        displayName = "Ultra 精密刻度",
+        description = "双圈精密长短刻度 + 扇区光带 + 右盘档位/RPM + 专辑氛围底",
+    ),
+    ULTRA_MINIMAL_RING(
+        displayName = "Ultra 极简光环",
+        description = "无数字磨砂厚光环 + 流畅主题色弧 + 极简档位与底部油量弧",
+    ),
+    ULTRA_CLEAN_LIGHT(
+        displayName = "Ultra 现代点刻（自适应昼夜）",
+        description = "日间陶瓷浅银 / 夜间深石墨 + 圆点刻度 + 圆角进度弧 + 右盘方角封面",
+    );
+
+    companion object {
+        fun fromName(raw: String?): GeelyClusterThemeStyle =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: FAKE_ULTRA
+    }
+}
+
 internal data class GeelyOverlayArea(
     val x: Int,
     val y: Int,
@@ -65,6 +106,8 @@ internal data class GeelySelfDrawConfig(
     val albumArtEnabled: Boolean = true,
     val bottomBarEnabled: Boolean = true,
     val dialColorMode: GeelyDialColorMode = GeelyDialColorMode.DEFAULT,
+    val dialThemeStyle: GeelyClusterThemeStyle = GeelyClusterThemeStyle.FAKE_ULTRA,
+    val appearanceMode: GeelyClusterAppearanceMode = GeelyClusterAppearanceMode.AUTO,
     val preferredDisplayId: Int = 2,
 ) {
     val hasAnySelfDrawOverlay: Boolean
@@ -91,6 +134,8 @@ internal object GeelyClusterPrefs {
     private const val KEY_ALBUM_ART_ENABLED = "self_draw_album_art_enabled"
     private const val KEY_BOTTOM_BAR_ENABLED = "self_draw_bottom_bar_enabled"
     private const val KEY_DIAL_COLOR_MODE = "self_draw_dial_color_mode"
+    private const val KEY_DIAL_THEME_STYLE = "self_draw_dial_theme_style"
+    private const val KEY_APPEARANCE_MODE = "self_draw_appearance_mode"
     private const val KEY_DISPLAY_ID = "display_id"
 
     fun prefs(context: Context): SharedPreferences =
@@ -121,6 +166,8 @@ internal object GeelyClusterPrefs {
             albumArtEnabled = sp.getBoolean(KEY_ALBUM_ART_ENABLED, true),
             bottomBarEnabled = sp.getBoolean(KEY_BOTTOM_BAR_ENABLED, true),
             dialColorMode = GeelyDialColorMode.fromName(sp.getString(KEY_DIAL_COLOR_MODE, null)),
+            dialThemeStyle = GeelyClusterThemeStyle.fromName(sp.getString(KEY_DIAL_THEME_STYLE, null)),
+            appearanceMode = GeelyClusterAppearanceMode.fromName(sp.getString(KEY_APPEARANCE_MODE, null)),
             preferredDisplayId = sp.getInt(KEY_DISPLAY_ID, 2),
         )
     }
@@ -139,6 +186,8 @@ internal object GeelyClusterPrefs {
             .putBoolean(KEY_ALBUM_ART_ENABLED, config.albumArtEnabled)
             .putBoolean(KEY_BOTTOM_BAR_ENABLED, config.bottomBarEnabled)
             .putString(KEY_DIAL_COLOR_MODE, config.dialColorMode.name)
+            .putString(KEY_DIAL_THEME_STYLE, config.dialThemeStyle.name)
+            .putString(KEY_APPEARANCE_MODE, config.appearanceMode.name)
             .putInt(KEY_DISPLAY_ID, config.preferredDisplayId)
         writeArea(editor, "hud", config.hudArea.clamp())
         writeArea(editor, "card", config.cardArea.clamp())

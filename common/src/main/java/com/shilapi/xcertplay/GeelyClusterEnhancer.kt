@@ -11,11 +11,15 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
+import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
+import android.media.AudioManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.text.InputType
@@ -25,6 +29,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -34,6 +39,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import com.shilapi.xcertplay.glance.CarPlayGlance
+import com.shilapi.xcertplay.hud.BydNavigationOutputs
 import com.shilapi.xcertplay.hud.ClusterTurnGuidance
 import com.shilapi.xcertplay.iap2.message.LaneGuidanceLane
 import kotlin.math.min
@@ -61,6 +67,60 @@ internal object GeelyClusterEnhancer {
     @Volatile
     private var latestLanes: List<LaneGuidanceLane> = emptyList()
     private var isFullScreenPresentationActive: Boolean = false
+    private var systemNightMode: Boolean = false
+    private var wasInPhoneCall: Boolean = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val callRecoveryTick = object : Runnable {
+        override fun run() {
+            if (!isFullScreenPresentationActive) {
+                wasInPhoneCall = false
+                return
+            }
+            val app = hostAppContext
+            val inCall = isPhoneCallActive(app)
+            if (wasInPhoneCall && !inCall) {
+                wasInPhoneCall = false
+                hostLogger("GeelyDimMenu: phone call ended; restoring full-screen cluster map")
+                mainHandler.postDelayed({
+                    if (isFullScreenPresentationActive && !isPhoneCallActive(hostAppContext)) {
+                        activeDimController?.forceReenterFullScreenMap("post-call")
+                    }
+                }, 900L)
+            } else if (inCall) {
+                wasInPhoneCall = true
+            }
+            mainHandler.postDelayed(this, 1000L)
+        }
+    }
+
+    private fun isPhoneCallActive(context: Context?): Boolean {
+        if (BydNavigationOutputs.carPlayCall() != null) return true
+        val am = context?.getSystemService(AudioManager::class.java) ?: return false
+        return am.mode == AudioManager.MODE_IN_COMMUNICATION ||
+            am.mode == AudioManager.MODE_IN_CALL ||
+            am.mode == AudioManager.MODE_RINGTONE
+    }
+
+    fun resolveEffectiveNightMode(config: GeelySelfDrawConfig): Boolean = when (config.appearanceMode) {
+        GeelyClusterAppearanceMode.AUTO -> systemNightMode
+        GeelyClusterAppearanceMode.DARK -> true
+        GeelyClusterAppearanceMode.LIGHT -> false
+    }
+
+    fun requestFullScreenMap(context: Context, reason: String = "manual"): Boolean {
+        val controller = ensureDimController(context)
+        return controller.forceReenterFullScreenMap(reason)
+    }
+
+    fun requestClassicCluster(context: Context): Boolean {
+        val controller = ensureDimController(context)
+        return controller.restoreClassicCluster()
+    }
+
+    private fun ensureDimController(context: Context): GeelyDimMenuController =
+        activeDimController ?: GeelyDimMenuController(context.applicationContext) { msg ->
+            hostLogger(msg)
+        }.also { activeDimController = it }
     private var previousLaneListener: ((List<LaneGuidanceLane>) -> Unit)? = null
     private val laneListenerHook: (List<LaneGuidanceLane>) -> Unit = { lanes ->
         previousLaneListener?.invoke(lanes)
@@ -91,8 +151,7 @@ internal object GeelyClusterEnhancer {
         val dialsOn = cfg.dialLeftEnabled || cfg.dialRightEnabled
         val hudOn = cfg.hasAnySelfDrawOverlay
         val status = when {
-            dialsOn && hudOn -> "双圆盘 + 自绘 HUD"
-            dialsOn -> "仅双圆盘"
+            dialsOn -> cfg.dialThemeStyle.displayName
             hudOn -> "仅自绘 HUD"
             else -> "已关闭"
         }
@@ -109,6 +168,7 @@ internal object GeelyClusterEnhancer {
         val app = context.applicationContext
         hostAppContext = app
         hostLogger = log
+        GeelyEcarxSensorReader.setLogger { msg -> hostLogger(msg) }
         if (CarPlayGlance.laneListener !== laneListenerHook) {
             previousLaneListener = CarPlayGlance.laneListener
             CarPlayGlance.laneListener = laneListenerHook
@@ -187,9 +247,19 @@ internal object GeelyClusterEnhancer {
 
         val config = GeelyClusterPrefs.load(context)
         val is1080 = GeelyVehicleDetector.isComposite1080Display(display)
+        systemNightMode = nightMode
+        val effectiveNight = resolveEffectiveNightMode(config)
+
+        // Keep Presentation window & bottom Y:720..1080 hardware crop zone strictly TRANSPARENT
+        // so returning to Classic Cluster (Mode 1) NEVER leaves an opaque black rectangle in the card slot!
+        presentation.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setFormat(PixelFormat.TRANSLUCENT)
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
 
         val outerRoot = FrameLayout(context).apply {
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(Color.TRANSPARENT)
         }
 
         // Top 1920x720 container holding CarPlay video SurfaceView + Fake Ultra dual dials
@@ -210,7 +280,7 @@ internal object GeelyClusterEnhancer {
 
         val fakeUltraView = GeelyFakeUltraOverlayView(context).apply {
             this.config = config
-            this.nightMode = nightMode
+            this.nightMode = effectiveNight
             this.routeActive = latestGuidance != null
         }
         currentRoot.addView(
@@ -225,7 +295,7 @@ internal object GeelyClusterEnhancer {
         // Full 1920x1080 self-draw fallback layer inside Presentation (used if 2038 overlay window is not attached)
         val selfDrawView = GeelySelfDrawCanvasView(context).apply {
             this.config = config
-            this.nightMode = nightMode
+            this.nightMode = effectiveNight
             this.fullScreen = true
             this.guidance = latestGuidance
             this.lanes = latestLanes
@@ -280,17 +350,25 @@ internal object GeelyClusterEnhancer {
         musicSubscription?.invoke()
         musicSubscription = ClusterMusicState.observe { snapshot ->
             activeFakeUltraView?.setArtwork(snapshot.artwork)
+            activeFakeUltraView?.setMusicInfo(snapshot.info.title, snapshot.info.playing)
         }
 
-        val controller = activeDimController ?: GeelyDimMenuController(context, hostLogger).also {
-            activeDimController = it
-        }
-        controller.enterFullScreenMap()
+        val controller = ensureDimController(context)
+        controller.forceReenterFullScreenMap("presentation-start")
 
         activeDimWatcher?.close()
         activeDimWatcher = GeelyDimLogcatWatcher(controller) {
-            hostLogger("GeelyDimMenu: passive exit to classic cluster detected")
+            if (isPhoneCallActive(hostAppContext)) {
+                wasInPhoneCall = true
+                hostLogger("GeelyDimMenu: cluster exited during phone call; will auto-restore after hang-up")
+            } else {
+                hostLogger("GeelyDimMenu: passive exit to classic cluster detected")
+            }
         }.also { it.start() }
+
+        wasInPhoneCall = isPhoneCallActive(hostAppContext)
+        mainHandler.removeCallbacks(callRecoveryTick)
+        mainHandler.postDelayed(callRecoveryTick, 1000L)
 
         syncStandaloneOverlayWindow(context.applicationContext)
         overlayWindow?.view?.fullScreen = true
@@ -300,6 +378,8 @@ internal object GeelyClusterEnhancer {
     /** Called in `ClusterMapPresentation.onStop()`. */
     fun onPresentationStopped() {
         isFullScreenPresentationActive = false
+        wasInPhoneCall = false
+        mainHandler.removeCallbacks(callRecoveryTick)
         musicSubscription?.invoke()
         musicSubscription = null
 
@@ -316,18 +396,25 @@ internal object GeelyClusterEnhancer {
 
     /** Called when day/night mode changes on `ClusterMapPresentation`. */
     fun onNightModeChanged(night: Boolean) {
-        activeFakeUltraView?.nightMode = night
-        activePresentationSelfDrawView?.nightMode = night
-        overlayWindow?.view?.nightMode = night
+        systemNightMode = night
+        val ctx = hostAppContext ?: activeFakeUltraView?.context
+        val effective = if (ctx != null) resolveEffectiveNightMode(GeelyClusterPrefs.load(ctx)) else night
+        activeFakeUltraView?.nightMode = effective
+        activePresentationSelfDrawView?.nightMode = effective
+        overlayWindow?.view?.nightMode = effective
     }
 
     fun refreshConfig(context: Context) {
         val cfg = GeelyClusterPrefs.load(context)
+        val effectiveNight = resolveEffectiveNightMode(cfg)
         activeFakeUltraView?.config = cfg
+        activeFakeUltraView?.nightMode = effectiveNight
         activePresentationSelfDrawView?.config = cfg
+        activePresentationSelfDrawView?.nightMode = effectiveNight
         syncStockClusterViewsVisibility(activePresentationInnerRoot, cfg)
         syncStandaloneOverlayWindow(context.applicationContext)
         overlayWindow?.view?.config = cfg
+        overlayWindow?.view?.nightMode = effectiveNight
         activePresentationSelfDrawView?.visibility =
             if (overlayWindow?.attached == true) View.INVISIBLE else View.VISIBLE
     }
@@ -347,11 +434,13 @@ internal object GeelyClusterEnhancer {
             closeStandaloneOverlayWindow()
             return
         }
+        val effectiveNight = resolveEffectiveNightMode(cfg)
         val currentWindow = overlayWindow
         if (currentWindow != null && currentWindow.attached &&
             currentWindow.display.displayId == targetDisplay.displayId
         ) {
             currentWindow.view.config = cfg
+            currentWindow.view.nightMode = effectiveNight
             currentWindow.view.fullScreen = isFullScreenPresentationActive
             currentWindow.view.guidance = latestGuidance
             currentWindow.view.lanes = latestLanes
@@ -361,6 +450,7 @@ internal object GeelyClusterEnhancer {
         val newWindow = GeelySelfDrawOverlayWindow(appContext, targetDisplay, hostLogger)
         if (newWindow.attach()) {
             newWindow.view.config = cfg
+            newWindow.view.nightMode = effectiveNight
             newWindow.view.fullScreen = isFullScreenPresentationActive
             newWindow.view.guidance = latestGuidance
             newWindow.view.lanes = latestLanes
@@ -393,6 +483,13 @@ private class GeelyCompositePreviewView(context: Context) : View(context) {
             field = value
             fakeUltraView.config = value
             fakeUltraView.previewMode = true
+            invalidate()
+        }
+
+    var previewRouteActive: Boolean = true
+        set(value) {
+            field = value
+            fakeUltraView.routeActive = value
             invalidate()
         }
 
@@ -430,7 +527,8 @@ private class GeelyCompositePreviewView(context: Context) : View(context) {
         canvas.scale(scale, scale)
 
         // 1. Upper 1920x720 simulated map background
-        bgPaint.color = if (config.mapThemeDark) Color.rgb(16, 26, 36) else Color.rgb(218, 226, 235)
+        val previewNight = GeelyClusterEnhancer.resolveEffectiveNightMode(config)
+        bgPaint.color = if (previewNight) Color.rgb(16, 26, 36) else Color.rgb(218, 226, 235)
         canvas.drawRect(0f, 0f, 1920f, 720f, bgPaint)
 
         // 2. Lower 1920x360 (Y: 720..1080) hardware crop source background
@@ -438,7 +536,7 @@ private class GeelyCompositePreviewView(context: Context) : View(context) {
         canvas.drawRect(0f, 720f, 1920f, 1080f, bgPaint)
 
         // 3. Render Fake Ultra dual dials, vignette & bottom bar in 1920x720
-        fakeUltraView.nightMode = config.mapThemeDark
+        fakeUltraView.nightMode = previewNight
         fakeUltraView.measure(
             MeasureSpec.makeMeasureSpec(1920, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(720, MeasureSpec.EXACTLY),
@@ -452,10 +550,10 @@ private class GeelyCompositePreviewView(context: Context) : View(context) {
             config = config,
             guidance = null,
             lanes = emptyList(),
-            nightMode = config.mapThemeDark,
-            fullScreen = true,
+            nightMode = previewNight,
+            fullScreen = previewRouteActive,
             nowMs = SystemClock.uptimeMillis(),
-            forcePreview = true,
+            forcePreview = previewRouteActive,
         )
 
         // 5. Split line at Y = 720
@@ -502,6 +600,7 @@ internal class GeelyClusterSettingsDialog(
 ) {
     private var config: GeelySelfDrawConfig = GeelyClusterPrefs.load(activity)
     private var selectedTab: Int = 0
+    private var previewRouteActive: Boolean = true
     private var previewView: GeelyCompositePreviewView? = null
     private var statusTextView: TextView? = null
     private var tabContentContainer: LinearLayout? = null
@@ -685,6 +784,53 @@ internal class GeelyClusterSettingsDialog(
     }
 
     private fun buildDialTab(container: LinearLayout) {
+        addSectionTitle(container, "仪表盘主题样式（4 套风格 · 实时切换）")
+        for (style in GeelyClusterThemeStyle.entries) {
+            val selected = config.dialThemeStyle == style
+            val card = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                background = GradientDrawable().apply {
+                    setColor(if (selected) Color.rgb(20, 62, 66) else Color.rgb(24, 34, 50))
+                    cornerRadius = dp(10).toFloat()
+                    setStroke(
+                        dp(if (selected) 2 else 1),
+                        if (selected) Color.rgb(24, 203, 170) else Color.rgb(42, 58, 82),
+                    )
+                }
+                setOnClickListener {
+                    if (config.dialThemeStyle != style) {
+                        config = config.copy(dialThemeStyle = style)
+                        onConfigUpdated()
+                        rebuildTabContent()
+                    }
+                }
+            }
+            card.addView(
+                TextView(activity).apply {
+                    text = if (selected) "●  ${style.displayName}（当前使用）" else "○  ${style.displayName}"
+                    setTextColor(if (selected) Color.rgb(122, 245, 224) else Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                    typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+                }
+            )
+            card.addView(
+                TextView(activity).apply {
+                    text = style.description
+                    setTextColor(Color.rgb(168, 190, 212))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setPadding(dp(18), dp(2), 0, 0)
+                }
+            )
+            container.addView(
+                card,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = dp(4)
+                    bottomMargin = dp(4)
+                },
+            )
+        }
+
         addSectionTitle(container, "仪表组件")
         addSwitchRow(
             container = container,
@@ -707,6 +853,20 @@ internal class GeelyClusterSettingsDialog(
             modeBtn,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
                 topMargin = dp(4)
+                bottomMargin = dp(6)
+            },
+        )
+        val appearanceBtn = createActionButton("仪表昼夜模式：${config.appearanceMode.displayName}  (点击切换)") {
+            val modes = GeelyClusterAppearanceMode.entries
+            val next = modes[(config.appearanceMode.ordinal + 1) % modes.size]
+            config = config.copy(appearanceMode = next, mapThemeDark = next != GeelyClusterAppearanceMode.LIGHT)
+            onConfigUpdated()
+            rebuildTabContent()
+        }
+        container.addView(
+            appearanceBtn,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                topMargin = dp(2)
                 bottomMargin = dp(6)
             },
         )
@@ -855,44 +1015,87 @@ internal class GeelyClusterSettingsDialog(
         }
         val pv = GeelyCompositePreviewView(activity).also {
             it.config = config
+            it.previewRouteActive = previewRouteActive
             previewView = it
         }
-        previewCard.addView(pv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(260)))
+        previewCard.addView(pv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(240)))
         container.addView(
             previewCard,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(4)
-                bottomMargin = dp(10)
+                bottomMargin = dp(8)
             },
         )
+
+        // Quick 4-theme switcher right under the live preview canvas
+        val themeRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(8))
+        }
+        val shortLabels = mapOf(
+            GeelyClusterThemeStyle.FAKE_ULTRA to "机械矢量",
+            GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS to "精密刻度",
+            GeelyClusterThemeStyle.ULTRA_MINIMAL_RING to "极简光环",
+            GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT to "现代点刻",
+        )
+        for ((idx, style) in GeelyClusterThemeStyle.entries.withIndex()) {
+            val active = config.dialThemeStyle == style
+            val btn = createActionButton(shortLabels[style] ?: style.displayName) {
+                config = config.copy(dialThemeStyle = style)
+                onConfigUpdated()
+                rebuildTabContent()
+            }.apply {
+                if (active) {
+                    background = GradientDrawable().apply {
+                        setColor(Color.rgb(24, 155, 134))
+                        cornerRadius = dp(10).toFloat()
+                    }
+                }
+            }
+            themeRow.addView(
+                btn,
+                LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+                    if (idx > 0) leftMargin = dp(6)
+                },
+            )
+        }
+        container.addView(themeRow)
 
         val quickRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
         }
-        val btnTheme = createActionButton(if (config.mapThemeDark) "切换预览明暗主题（当前深色）" else "切换预览明暗主题（当前浅色）") {
-            config = config.copy(mapThemeDark = !config.mapThemeDark)
+        val btnTheme = createActionButton("昼夜：${config.appearanceMode.shortLabel}") {
+            val modes = GeelyClusterAppearanceMode.entries
+            val next = modes[(config.appearanceMode.ordinal + 1) % modes.size]
+            config = config.copy(appearanceMode = next, mapThemeDark = next != GeelyClusterAppearanceMode.LIGHT)
             onConfigUpdated()
             rebuildTabContent()
         }
-        val btnEnterMap = createActionButton("切全屏地图 (Mode 3)") {
-            val ok = dimController.enterFullScreenMap()
+        val btnRoute = createActionButton(if (previewRouteActive) "场景：导航中" else "场景：待机态") {
+            previewRouteActive = !previewRouteActive
+            previewView?.previewRouteActive = previewRouteActive
+            rebuildTabContent()
+        }
+        val btnEnterMap = createActionButton("切全屏 (M3)") {
+            val ok = GeelyClusterEnhancer.requestFullScreenMap(activity, "dialog-button")
             Toast.makeText(
                 activity,
-                if (ok) "已发送 switchNaviMode(3)" else "车机 DimMenuInteraction 不可用",
+                if (ok) "已发送强制切全屏地图 (Mode 3)" else "车机 DimMenuInteraction 不可用",
                 Toast.LENGTH_SHORT,
             ).show()
         }
-        val btnExitMap = createActionButton("回经典仪表 (Mode 1)") {
-            val ok = dimController.restoreClassicCluster()
+        val btnExitMap = createActionButton("回经典 (M1)") {
+            val ok = GeelyClusterEnhancer.requestClassicCluster(activity)
             Toast.makeText(
                 activity,
                 if (ok) "已发送 switchNaviMode(1)" else "车机 DimMenuInteraction 不可用",
                 Toast.LENGTH_SHORT,
             ).show()
         }
-        quickRow.addView(btnTheme, LinearLayout.LayoutParams(0, dp(44), 1.3f).apply { rightMargin = dp(6) })
-        quickRow.addView(btnEnterMap, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(6) })
-        quickRow.addView(btnExitMap, LinearLayout.LayoutParams(0, dp(44), 1f))
+        quickRow.addView(btnTheme, LinearLayout.LayoutParams(0, dp(42), 1f).apply { rightMargin = dp(5) })
+        quickRow.addView(btnRoute, LinearLayout.LayoutParams(0, dp(42), 1f).apply { rightMargin = dp(5) })
+        quickRow.addView(btnEnterMap, LinearLayout.LayoutParams(0, dp(42), 1f).apply { rightMargin = dp(5) })
+        quickRow.addView(btnExitMap, LinearLayout.LayoutParams(0, dp(42), 1f))
         container.addView(quickRow)
 
         addSwitchRow(

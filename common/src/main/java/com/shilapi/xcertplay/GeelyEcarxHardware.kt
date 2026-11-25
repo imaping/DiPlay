@@ -33,15 +33,24 @@ internal data class GeelyClusterSensorSnapshot(
     val avgFuelLPer100Km: GeelyTimedFloat = GeelyTimedFloat(),
     val fuelPercent: GeelyTimedFloat = GeelyTimedFloat(),
     val coolantTempC: GeelyTimedFloat = GeelyTimedFloat(),
-)
+    val gearLabel: String? = null,
+    val gearUpdatedAtMs: Long = 0L,
+) {
+    fun gearIfFresh(nowElapsedMs: Long, maxAgeMs: Long = 4000L): String? {
+        if (gearLabel == null || gearUpdatedAtMs <= 0L) return null
+        if (nowElapsedMs - gearUpdatedAtMs > maxAgeMs) return null
+        return gearLabel
+    }
+}
 
 /**
- * Reflection reader for ECARX AdaptAPI `ISensor` 5 vehicle channels:
+ * Reflection reader for ECARX AdaptAPI `ISensor` 6 vehicle channels:
  * - Speed (`0x00101A00`, m/s -> km/h)
  * - RPM (`0x00100900`)
  * - Average fuel consumption (`0x00400100`, L/100km)
  * - Fuel level percentage (`0x00404500`, %)
  * - Coolant temperature (`0x00100F00`, °C)
+ * - Transmission gear (`0x00200200`, `P`/`R`/`N`/`D`/`M1..M10`)
  */
 internal object GeelyEcarxSensorReader {
     private const val SENSOR_SPEED = 0x00101A00
@@ -49,14 +58,34 @@ internal object GeelyEcarxSensorReader {
     private const val SENSOR_AVG_FUEL = 0x00400100
     private const val SENSOR_FUEL_PERCENT = 0x00404500
     private const val SENSOR_COOLANT_TEMP = 0x00100F00
+    private const val SENSOR_GEAR = 0x00200200
+    private const val GEAR_PARK = 2097712
+    private const val GEAR_REVERSE = 2097728
+    private const val GEAR_NEUTRAL = 2097680
+    private const val GEAR_DRIVE = 2097696
+    private val GEAR_MANUAL_RANGE = 2097665..2097674
 
     private val lock = Any()
     private var car: Any? = null
     private var sensorManager: Any? = null
     private var sensorValueMethod: java.lang.reflect.Method? = null
+    private var sensorEventMethod: java.lang.reflect.Method? = null
+    private var sensorSupportedMethod: java.lang.reflect.Method? = null
+    @Volatile
+    private var discoveredCoolantSensorId: Int = SENSOR_COOLANT_TEMP
+    @Volatile
+    private var discoveredCoolantUsesEvent: Boolean = false
+    @Volatile
+    private var sensorProbeLogged: Boolean = false
+    @Volatile
+    private var logger: (String) -> Unit = {}
     @Volatile
     private var connected = false
     private var latestSnapshot = GeelyClusterSensorSnapshot()
+
+    fun setLogger(log: (String) -> Unit) {
+        logger = log
+    }
 
     val executor: ScheduledExecutorService by lazy {
         Executors.newSingleThreadScheduledExecutor { r ->
@@ -99,12 +128,25 @@ internal object GeelyEcarxSensorReader {
             latestSnapshot.fuelPercent
         }
 
-        val coolantRaw = invokeSensor(sensor, method, SENSOR_COOLANT_TEMP)
-        val coolant = if (coolantRaw != null && coolantRaw.isFinite() && coolantRaw in -60f..200f) {
+        val coolantRaw = if (discoveredCoolantUsesEvent) {
+            sensorEventMethod?.let { eventMethod ->
+                runCatching { (eventMethod.invoke(sensor, discoveredCoolantSensorId) as? Number)?.toFloat() }.getOrNull()
+            }
+        } else {
+            invokeSensor(sensor, method, discoveredCoolantSensorId)
+        }
+        val coolant = if (coolantRaw != null && coolantRaw.isFinite() && coolantRaw in -40f..200f && coolantRaw != 0f) {
             GeelyTimedFloat(coolantRaw, now)
         } else {
             latestSnapshot.coolantTempC
         }
+
+        val gearRaw = sensorEventMethod?.let { eventMethod ->
+            runCatching { (eventMethod.invoke(sensor, SENSOR_GEAR) as? Number)?.toInt() }.getOrNull()
+        }
+        val parsedGear = gearRaw?.let(::decodeGear)
+        val gearLabel = parsedGear ?: latestSnapshot.gearLabel
+        val gearUpdatedAt = if (parsedGear != null) now else latestSnapshot.gearUpdatedAtMs
 
         latestSnapshot = GeelyClusterSensorSnapshot(
             speedKmh = speedKmh,
@@ -112,8 +154,19 @@ internal object GeelyEcarxSensorReader {
             avgFuelLPer100Km = avgFuel,
             fuelPercent = fuelPct,
             coolantTempC = coolant,
+            gearLabel = gearLabel,
+            gearUpdatedAtMs = gearUpdatedAt,
         )
         return latestSnapshot
+    }
+
+    private fun decodeGear(event: Int): String? = when (event) {
+        GEAR_PARK -> "P"
+        GEAR_REVERSE -> "R"
+        GEAR_NEUTRAL -> "N"
+        GEAR_DRIVE -> "D"
+        in GEAR_MANUAL_RANGE -> "M${event - 2097664}"
+        else -> null
     }
 
     private fun invokeSensor(sensor: Any, method: java.lang.reflect.Method, type: Int): Float? =
@@ -136,11 +189,62 @@ internal object GeelyEcarxSensorReader {
 
             val sensor = carInstance.javaClass.getMethod("getSensorManager").invoke(carInstance) ?: return null
             val getValue = sensor.javaClass.getMethod("getSensorLatestValue", Int::class.javaPrimitiveType)
+            val getEvent = runCatching {
+                sensor.javaClass.getMethod("getSensorEvent", Int::class.javaPrimitiveType)
+            }.getOrNull()
+            val isSupported = runCatching {
+                sensor.javaClass.getMethod("isSensorSupported", Int::class.javaPrimitiveType)
+            }.getOrNull()
             sensorManager = sensor
             sensorValueMethod = getValue
+            sensorEventMethod = getEvent
+            sensorSupportedMethod = isSupported
             connected = true
+            probeCoolantSensorsOnce(sensor, getValue, getEvent, isSupported)
             sensor
         }.getOrNull()
+    }
+
+    private fun probeCoolantSensorsOnce(
+        sensor: Any,
+        getValue: java.lang.reflect.Method,
+        getEvent: java.lang.reflect.Method?,
+        isSupported: java.lang.reflect.Method?,
+    ) {
+        if (sensorProbeLogged) return
+        sensorProbeLogged = true
+        runCatching {
+            val iSensorClass = Class.forName("com.ecarx.xui.adaptapi.car.sensor.ISensor")
+            val summary = StringBuilder()
+            for (field in iSensorClass.fields) {
+                if (field.type != Int::class.javaPrimitiveType) continue
+                val name = field.name
+                if (!name.startsWith("SENSOR_TYPE_")) continue
+                val upper = name.uppercase()
+                if ("COOLANT" !in upper && "WATER" !in upper && "ENGINE" !in upper && "TEMP" !in upper && "ENDURANCE" !in upper) {
+                    continue
+                }
+                val id = runCatching { field.getInt(null) }.getOrNull() ?: continue
+                val status = runCatching { isSupported?.invoke(sensor, id)?.toString() }.getOrNull()
+                if (status != null && (status.equals("notavailable", true) || status.equals("error", true))) {
+                    continue
+                }
+                val fVal = runCatching { (getValue.invoke(sensor, id) as? Number)?.toFloat() }.getOrNull()
+                val eVal = runCatching { (getEvent?.invoke(sensor, id) as? Number)?.toInt() }.getOrNull()
+                if (summary.isNotEmpty()) summary.append(", ")
+                summary.append("$name(0x${id.toString(16)})[st=$status val=$fVal ev=$eVal]")
+                if (("COOLANT" in upper || "WATER" in upper) && "LEVEL" !in upper) {
+                    if (fVal != null && fVal.isFinite() && fVal in -40f..200f && fVal != 0f) {
+                        discoveredCoolantSensorId = id
+                        discoveredCoolantUsesEvent = false
+                    } else if (eVal != null && eVal in -40..200 && eVal != 0) {
+                        discoveredCoolantSensorId = id
+                        discoveredCoolantUsesEvent = true
+                    }
+                }
+            }
+            logger("GeelySensors: probe selectedCoolant=0x${discoveredCoolantSensorId.toString(16)} found=[$summary]")
+        }
     }
 
     private fun attachConnectableIfPresent(carInstance: Any) {
@@ -183,8 +287,10 @@ internal class GeelyDimMenuController(
     private val log: (String) -> Unit = {},
 ) {
     private val appContext = context.applicationContext
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var dimMenuInteraction: Any? = null
     private var switchNaviModeMethod: java.lang.reflect.Method? = null
+    private var getNaviModeMethod: java.lang.reflect.Method? = null
 
     @Volatile
     var lastActiveSwitchElapsedMs: Long = 0L
@@ -194,6 +300,49 @@ internal class GeelyDimMenuController(
 
     fun restoreClassicCluster(): Boolean = switchNaviMode(MODE_CLASSIC_CLUSTER)
 
+    fun getNaviMode(): Int? = runCatching {
+        val target = ensureDimMenuInteraction() ?: return null
+        val method = getNaviModeMethod ?: return null
+        (method.invoke(target) as? Number)?.toInt()
+    }.getOrNull()
+
+    /**
+     * Robustly re-enters full-screen map mode (`Mode 3`), including after a phone call or
+     * external cluster interruption where a stale `DimMenuInteraction` instance or cached
+     * mode state causes a single `switchNaviMode(3)` call to be ignored.
+     */
+    fun forceReenterFullScreenMap(reason: String = "manual"): Boolean {
+        val before = getNaviMode()
+        log("GeelyDimMenu: forceReenter($reason) beforeMode=$before")
+        val directOk = switchNaviMode(MODE_FULLSCREEN_MAP)
+        val afterDirect = getNaviMode()
+        if (directOk && (afterDirect == null || afterDirect == MODE_FULLSCREEN_MAP)) {
+            return true
+        }
+        // Reset cached binder/proxy and pulse 1 -> 3 so the DIM MCU releases any stale phone/menu tab
+        resetCachedHandle()
+        switchNaviMode(MODE_CLASSIC_CLUSTER)
+        mainHandler.postDelayed({
+            val ok1 = switchNaviMode(MODE_FULLSCREEN_MAP)
+            val modeAfter = getNaviMode()
+            log("GeelyDimMenu: pulse($reason) -> ok=$ok1 afterMode=$modeAfter")
+            if (!ok1 || (modeAfter != null && modeAfter != MODE_FULLSCREEN_MAP)) {
+                mainHandler.postDelayed({
+                    resetCachedHandle()
+                    val ok2 = switchNaviMode(MODE_FULLSCREEN_MAP)
+                    log("GeelyDimMenu: retry($reason) -> ok=$ok2 afterMode=${getNaviMode()}")
+                }, 1000L)
+            }
+        }, 250L)
+        return true
+    }
+
+    fun resetCachedHandle() {
+        dimMenuInteraction = null
+        switchNaviModeMethod = null
+        getNaviModeMethod = null
+    }
+
     fun switchNaviMode(mode: Int): Boolean {
         lastActiveSwitchElapsedMs = SystemClock.elapsedRealtime()
         return runCatching {
@@ -201,11 +350,10 @@ internal class GeelyDimMenuController(
             val method = switchNaviModeMethod ?: return false
             val result = method.invoke(target, mode)
             val ok = (result as? Boolean) ?: true
-            log("GeelyDimMenu: switchNaviMode($mode) -> $ok")
+            log("GeelyDimMenu: switchNaviMode($mode) -> $ok (readback=${getNaviMode()})")
             ok
         }.onFailure { e ->
-            dimMenuInteraction = null
-            switchNaviModeMethod = null
+            resetCachedHandle()
             log("GeelyDimMenu: switchNaviMode($mode) failed: ${e.javaClass.simpleName}")
         }.getOrDefault(false)
     }
@@ -217,8 +365,10 @@ internal class GeelyDimMenuController(
             val menuClass = Class.forName("com.ecarx.xui.adaptapi.diminteraction.DimMenuInteraction")
             val menu = menuClass.getConstructor(Context::class.java).newInstance(appContext)
             val method = menuClass.getMethod("switchNaviMode", Int::class.javaPrimitiveType)
+            val getMethod = runCatching { menuClass.getMethod("getNaviMode") }.getOrNull()
             dimMenuInteraction = menu
             switchNaviModeMethod = method
+            getNaviModeMethod = getMethod
             return menu
         }
         // 2. Fallback to DimInteraction.create(Context).getDimMenuInteraction()
@@ -229,8 +379,10 @@ internal class GeelyDimMenuController(
             val menu = dimInstance.javaClass.getMethod("getDimMenuInteraction").invoke(dimInstance)
                 ?: return null
             val method = menu.javaClass.getMethod("switchNaviMode", Int::class.javaPrimitiveType)
+            val getMethod = runCatching { menu.javaClass.getMethod("getNaviMode") }.getOrNull()
             dimMenuInteraction = menu
             switchNaviModeMethod = method
+            getNaviModeMethod = getMethod
             menu
         }.getOrNull()
     }

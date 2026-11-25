@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 520" width="520" height="520">
+  <defs>
+    <radialGradient id="cleanBg" cx="260" cy="260" r="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#12171F" stop-opacity="0.78"/>
+      <stop offset="86%" stop-color="#0D1118" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#0D1118" stop-opacity="0.00"/>
+    </radialGradient>
+  </defs>
+  <circle cx="260" cy="260" r="232" fill="url(#cleanBg)" data-fixed-color="true"/>
+  <path d="M 104.44 415.56 A 220.00 220.00 0 1 1 415.56 415.56" fill="none" stroke="#8491A0" stroke-opacity="0.38" stroke-width="16" stroke-linecap="round" data-fixed-color="true"/>
+  <path d="M 383.02 442.39 A 220.00 220.00 0 0 1 136.98 442.39" fill="none" stroke="#AFBCC9" stroke-opacity="0.32" stroke-width="4.5" stroke-linecap="round" data-fixed-color="true"/>
+  <path d="M 479.87 267.68 A 220.00 220.00 0 0 1 415.56 415.56" fill="none" stroke="#E8563A" stroke-opacity="0.95" stroke-width="9" stroke-linecap="round" data-fixed-color="true"/>
+  <g id="dot-ticks">
+    <circle cx="114.34" cy="405.66" r="3.2" fill="#C3D0DE" fill-opacity="0.66" data-fixed-color="true"/>
+    <circle cx="55.30" cy="283.06" r="3.2" fill="#C3D0DE" fill-opacity="0.66" data-fixed-color="true"/>
+    <circle cx="85.57" cy="150.40" r="3.2" fill="#C3D0DE" fill-opacity="0.66" data-fixed-color="true"/>
+    <circle cx="191.96" cy="65.56" r="3.2" fill="#C3D0DE" fill-opacity="0.66" data-fixed-color="true"/>
+    <circle cx="328.04" cy="65.56" r="3.2" fill="#C3D0DE" fill-opacity="0.66" data-fixed-color="true"/>
+    <circle cx="434.43" cy="150.40" r="3.2" fill="#C3D0DE" fill-opacity="0.66" data-fixed-color="true"/>
+    <circle cx="464.70" cy="283.06" r="3.2" fill="#E8563A" fill-opacity="0.95" data-fixed-color="true"/>
+    <circle cx="405.66" cy="405.66" r="3.2" fill="#E8563A" fill-opacity="0.95" data-fixed-color="true"/>
+  </g>
+</svg>
