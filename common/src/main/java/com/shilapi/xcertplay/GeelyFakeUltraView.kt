@@ -1110,7 +1110,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             return
         }
         setArtwork(snapshot.artwork)
-        setMusicInfo(snapshot.primaryLine, snapshot.playing, snapshot.secondaryLine)
+        setMusicInfo(snapshot.singleLineDisplay, snapshot.playing, snapshot.secondaryLine)
     }
 
     fun hasUsableArtwork(): Boolean = rawArtwork != null && rawArtwork?.isRecycled == false
@@ -1224,13 +1224,14 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             previewMode && effectiveRouteActive && nowPlayingTitle.isNullOrBlank() -> "阿拉斯加海湾"
             else -> nowPlayingTitle
         }
-        val activeSongSubtitle = if (hasMediaFeed) nowPlayingSubtitle else null
         val activeSongPlaying = !activeSong.isNullOrBlank() && (nowPlayingActive || previewMode)
 
         // 1. Background / Vignette / Album / Standby Clock Backdrop (supports AUTO / MAP / ALBUM / CLOCK)
+        //    MAP is always allowed even when CarPlay is disconnected so a native head-unit map
+        //    projected onto the cluster display can show through cleanly between the two dials.
         val hasAlbumArt = hasMediaFeed && rawArtwork != null && rawArtwork?.isRecycled == false
         val effectiveDisplayMode = when (config.centerMode) {
-            GeelyClusterCenterMode.MAP -> if (hasCarPlayFeed) GeelyClusterCenterMode.MAP else GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.MAP -> GeelyClusterCenterMode.MAP
             GeelyClusterCenterMode.ALBUM -> when {
                 hasAlbumArt -> GeelyClusterCenterMode.ALBUM
                 effectiveRouteActive -> GeelyClusterCenterMode.MAP
@@ -1255,25 +1256,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                 if (config.mapVignetteEnabled) {
                     ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = true)
                 }
-                val coverTop = if (effectiveRouteActive) 240f else 148f
-                drawCenteredAlbumCover(canvas, top = coverTop)
-                if (!effectiveRouteActive && config.bottomBarEnabled && !activeSong.isNullOrBlank()) {
-                    if (ultraThemeRenderer.drawCenterMusicCaption(
-                            canvas = canvas,
-                            style = themeStyle,
-                            nightMode = nightMode,
-                            primaryLine = activeSong,
-                            secondaryLine = activeSongSubtitle,
-                            isPlaying = activeSongPlaying,
-                            accentColor = currentAccent,
-                            nowMs = SystemClock.uptimeMillis(),
-                            baselineY = coverTop + 280f + 50f,
-                            overArtworkBackdrop = true,
-                        )
-                    ) {
-                        needsNextFrame = true
-                    }
-                }
+                drawCenteredAlbumCover(canvas, top = if (effectiveRouteActive) 240f else 172f)
             }
             GeelyClusterCenterMode.MAP -> {
                 if (config.mapVignetteEnabled) {
@@ -1282,7 +1265,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
             else -> {
                 ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = false)
-                val clockFuel = if (!hasCarPlayFeed && config.bottomBarEnabled) fuelText else null
+                val clockFuel = if (config.bottomBarEnabled && activeSong.isNullOrBlank()) fuelText else null
                 ultraThemeRenderer.drawStandbyClock(
                     canvas = canvas,
                     style = themeStyle,
@@ -1290,23 +1273,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                     accentColor = currentAccent,
                     fuelText = clockFuel,
                 )
-                if (!hasCarPlayFeed && config.bottomBarEnabled && !activeSong.isNullOrBlank()) {
-                    if (ultraThemeRenderer.drawCenterMusicCaption(
-                            canvas = canvas,
-                            style = themeStyle,
-                            nightMode = nightMode,
-                            primaryLine = activeSong,
-                            secondaryLine = activeSongSubtitle,
-                            isPlaying = activeSongPlaying,
-                            accentColor = currentAccent,
-                            nowMs = SystemClock.uptimeMillis(),
-                            baselineY = if (clockFuel.isNullOrBlank()) 486f else 518f,
-                            overArtworkBackdrop = false,
-                        )
-                    ) {
-                        needsNextFrame = true
-                    }
-                }
             }
         }
 
@@ -1354,24 +1320,28 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             canvas.restoreToCount(rightSave)
         }
 
-        // 4. Bottom status / live lyrics & song bar (`Y: 660..720`) — only shown during CarPlay
-        //    outside the centered album layout, leaving the factory QNX bottom bar clear in standby
-        //    or native head-unit music playback so OEM song titles are never overlapped.
-        if (config.bottomBarEnabled && hasCarPlayFeed && (!showingCenterAlbum || effectiveRouteActive)) {
-            val timeText = if (showingCenterClock) "" else timeFormatter.format(Date())
-            if (ultraThemeRenderer.drawUltraBottomMusicBar(
-                    canvas = canvas,
-                    style = themeStyle,
-                    nightMode = nightMode,
-                    songTitle = activeSong?.takeIf { it.isNotBlank() },
-                    isPlaying = activeSongPlaying,
-                    accentColor = currentAccent,
-                    nowMs = SystemClock.uptimeMillis(),
-                    fallbackTime = timeText,
-                    fallbackFuel = fuelText,
-                )
-            ) {
-                needsNextFrame = true
+        // 4. Unified live lyrics / song bar (`baselineY = 622f`, cleanly above the factory QNX
+        //    bottom media strip at `Y ≈ 656..704`) across CarPlay, native music, map, album, and clock.
+        if (config.bottomBarEnabled) {
+            val showStatusFallback = !showingCenterClock && activeSong.isNullOrBlank()
+            val timeText = if (showStatusFallback) timeFormatter.format(Date()) else ""
+            val fallbackFuel = if (showStatusFallback) fuelText else ""
+            if (!activeSong.isNullOrBlank() || showStatusFallback) {
+                if (ultraThemeRenderer.drawUltraBottomMusicBar(
+                        canvas = canvas,
+                        style = themeStyle,
+                        nightMode = nightMode,
+                        songTitle = activeSong?.takeIf { it.isNotBlank() },
+                        isPlaying = activeSongPlaying,
+                        accentColor = currentAccent,
+                        nowMs = SystemClock.uptimeMillis(),
+                        fallbackTime = timeText,
+                        fallbackFuel = fallbackFuel,
+                        overDarkBackdrop = showingCenterAlbum,
+                    )
+                ) {
+                    needsNextFrame = true
+                }
             }
         }
 

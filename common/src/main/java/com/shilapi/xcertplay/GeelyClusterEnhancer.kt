@@ -167,6 +167,53 @@ internal object GeelyClusterEnhancer {
         }
     }
 
+    private var carPlayHostAttached: Boolean = false
+    private var carPlayTrackActive: Boolean = false
+
+    private fun ensureCarPlayMusicSubscription(context: Context) {
+        val app = context.applicationContext
+        if (musicSubscription != null) return
+        runOnMain {
+            if (musicSubscription != null) return@runOnMain
+            musicSubscription = ClusterMusicState.observe { snapshot ->
+                val hasCarPlayTrack = snapshot.info.playing ||
+                    !snapshot.info.title.isNullOrBlank() ||
+                    (snapshot.artwork != null && !snapshot.artwork.isRecycled)
+                val wasTrackActive = carPlayTrackActive
+                carPlayTrackActive = hasCarPlayTrack
+                if (isFullScreenPresentationActive) {
+                    currentFakeUltraView?.apply {
+                        carPlayConnected = true
+                        externalMediaActive = false
+                        setArtwork(snapshot.artwork)
+                        setMusicInfo(snapshot.info.title, snapshot.info.playing, snapshot.info.artist)
+                    }
+                } else if (carPlayHostAttached && hasCarPlayTrack) {
+                    // Support CarPlay album/lyrics on the persistent dual-dial theme even when
+                    // the separate cluster map stream (`clusterEnabled`) is turned off.
+                    if (!wasTrackActive) {
+                        GeelyVehicleMediaObserver.stopExternalPlayback(app)
+                    }
+                    currentFakeUltraView?.apply {
+                        externalMediaActive = true
+                        setArtwork(snapshot.artwork)
+                        setMusicInfo(snapshot.info.title, snapshot.info.playing, snapshot.info.artist)
+                    }
+                } else if (!isFullScreenPresentationActive) {
+                    applyVehicleMediaIfStandby()
+                }
+            }
+        }
+    }
+
+    private fun stopCarPlayMusicSubscription() {
+        carPlayTrackActive = false
+        runOnMain {
+            musicSubscription?.invoke()
+            musicSubscription = null
+        }
+    }
+
     private fun ensureVehicleMediaObserver(context: Context) {
         val app = context.applicationContext
         if (vehicleMediaSubscription != null) {
@@ -187,6 +234,7 @@ internal object GeelyClusterEnhancer {
 
     private fun applyVehicleMediaIfStandby() {
         if (isFullScreenPresentationActive) return
+        if (carPlayHostAttached && carPlayTrackActive) return
         currentFakeUltraView?.applyVehicleMedia(lastVehicleMediaSnapshot)
     }
 
@@ -302,6 +350,8 @@ internal object GeelyClusterEnhancer {
     }
 
     private fun clearBackgroundCarPlayOverlay() {
+        carPlayHostAttached = false
+        stopCarPlayMusicSubscription()
         if (CarPlayGlance.laneListener === laneListenerHook) {
             CarPlayGlance.laneListener = previousLaneListener
             previousLaneListener = null
@@ -363,13 +413,14 @@ internal object GeelyClusterEnhancer {
             if (!isPersistentThemeActive()) {
                 syncPersistentThemeWindow(app, requestFullScreen = false)
             }
+            syncClusterWheelKeyActive(app)
         }
     }
 
     /** Called when [DiPlaySessionService] stops (CarPlay disconnected or stopped from notification). */
     fun onSessionServiceDestroyed() {
         runOnMain {
-            if (backgroundTurnListenerAttached && !CarPlayBackgroundSession.hasSession()) {
+            if (!CarPlayBackgroundSession.hasSession()) {
                 detachBackgroundTurnListener()
                 clearBackgroundCarPlayOverlay()
             }
@@ -412,6 +463,7 @@ internal object GeelyClusterEnhancer {
         hostAppContext = app
         hostLogger = log
         carPlayNightSink = onVehicleNightChanged
+        carPlayHostAttached = true
         backgroundTurnListenerAttached = false
         GeelyEcarxSensorReader.setLogger { msg -> hostLogger(msg) }
         if (CarPlayGlance.laneListener !== laneListenerHook) {
@@ -423,6 +475,7 @@ internal object GeelyClusterEnhancer {
         ensureVehicleDayNightObserver(app)
         syncStandaloneOverlayWindow(app)
         syncPersistentThemeWindow(app, requestFullScreen = false)
+        ensureCarPlayMusicSubscription(app)
     }
 
     /** Called in `CarPlayHostActivity.onDestroy`. */
@@ -634,11 +687,10 @@ internal object GeelyClusterEnhancer {
             invalidate()
         }
 
-        musicSubscription?.invoke()
-        musicSubscription = ClusterMusicState.observe { snapshot ->
-            currentFakeUltraView?.setArtwork(snapshot.artwork)
-            currentFakeUltraView?.setMusicInfo(snapshot.info.title, snapshot.info.playing, snapshot.info.artist)
-        }
+        // Stop any lingering head-unit music session when CarPlay takes over the cluster.
+        GeelyVehicleMediaObserver.stopExternalPlayback(context.applicationContext)
+        stopCarPlayMusicSubscription()
+        ensureCarPlayMusicSubscription(context.applicationContext)
 
         val controller = ensureDimController(context)
         controller.forceReenterFullScreenMap("presentation-start")
@@ -668,31 +720,49 @@ internal object GeelyClusterEnhancer {
         isFullScreenPresentationActive = false
         wasInPhoneCall = false
         mainHandler.removeCallbacks(callRecoveryTick)
-        musicSubscription?.invoke()
-        musicSubscription = null
 
         activeDimWatcher?.close()
         activeDimWatcher = null
 
         val keepBackgroundGuidance = CarPlayBackgroundSession.hasSession() &&
             GeelyVehicleDetector.isGeelyOrEcarx(hostAppContext)
+        val keepCarPlaySession = carPlayHostAttached || keepBackgroundGuidance
         if (!keepBackgroundGuidance) {
             latestGuidance = null
             latestLanes = emptyList()
-        }
-        currentFakeUltraView?.clearCarPlayData()
-
-        val keepThemeAlive = isPersistentThemeActive() &&
-            (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
-        if (keepThemeAlive) {
-            applyVehicleMediaIfStandby()
-        } else {
-            activeDimController?.restoreClassicCluster()
         }
 
         activeFakeUltraView = null
         activePresentationSelfDrawView = null
         activePresentationInnerRoot = null
+
+        val keepThemeAlive = isPersistentThemeActive() &&
+            (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
+
+        if (!keepCarPlaySession) {
+            stopCarPlayMusicSubscription()
+            currentFakeUltraView?.clearCarPlayData()
+            if (keepThemeAlive) {
+                applyVehicleMediaIfStandby()
+            } else {
+                activeDimController?.restoreClassicCluster()
+            }
+        } else {
+            currentFakeUltraView?.apply {
+                carPlayConnected = false
+                routeActive = false
+                if (carPlayTrackActive) {
+                    externalMediaActive = true
+                }
+                invalidate()
+            }
+            if (!keepThemeAlive) {
+                activeDimController?.restoreClassicCluster()
+            } else if (!carPlayTrackActive) {
+                applyVehicleMediaIfStandby()
+            }
+        }
+
         overlayWindow?.view?.apply {
             fullScreen = false
             if (!keepBackgroundGuidance) {
@@ -705,24 +775,25 @@ internal object GeelyClusterEnhancer {
     }
 
     /**
-     * Cycles the center display content between `MAP`, `ALBUM`, and `CLOCK` when triggered by the
-     * user's bound steering-wheel button (long press or double click).
+     * Cycles the center display content between `MAP` (transparent center for CarPlay or native
+     * head-unit map projection), `ALBUM` (when album art is available), and `CLOCK` when triggered
+     * by the user's bound steering-wheel button (long press or double click).
      */
     fun cycleCenterMode(context: Context): String {
         val app = context.applicationContext
         val cfg = GeelyClusterPrefs.load(app)
         val hasCarPlay = isFullScreenPresentationActive
         val hasArtwork = currentFakeUltraView?.hasUsableArtwork() == true
-        val hasMediaAlbum = hasArtwork && (hasCarPlay || lastVehicleMediaSnapshot.hasContent)
+        val hasMediaAlbum = hasArtwork && (hasCarPlay || carPlayHostAttached || lastVehicleMediaSnapshot.hasContent)
         val routeNow = hasCarPlay && latestGuidance != null
 
         val available = ArrayList<GeelyClusterCenterMode>(3)
-        if (hasCarPlay) available.add(GeelyClusterCenterMode.MAP)
+        available.add(GeelyClusterCenterMode.MAP)
         if (hasMediaAlbum) available.add(GeelyClusterCenterMode.ALBUM)
         available.add(GeelyClusterCenterMode.CLOCK)
 
         val currentVisible = when (cfg.centerMode) {
-            GeelyClusterCenterMode.MAP -> if (hasCarPlay) GeelyClusterCenterMode.MAP else GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.MAP -> GeelyClusterCenterMode.MAP
             GeelyClusterCenterMode.ALBUM -> if (hasMediaAlbum) GeelyClusterCenterMode.ALBUM else GeelyClusterCenterMode.CLOCK
             GeelyClusterCenterMode.CLOCK -> GeelyClusterCenterMode.CLOCK
             GeelyClusterCenterMode.AUTO -> when {
@@ -732,11 +803,7 @@ internal object GeelyClusterEnhancer {
             }
         }
 
-        if (available.size <= 1) {
-            return "CLOCK(no-media)"
-        }
-
-        val currentIdx = available.indexOf(currentVisible)
+        val currentIdx = available.indexOf(currentVisible).coerceAtLeast(0)
         val nextMode = available[(currentIdx + 1) % available.size]
         GeelyClusterPrefs.save(app, cfg.copy(centerMode = nextMode))
         refreshConfig(app)

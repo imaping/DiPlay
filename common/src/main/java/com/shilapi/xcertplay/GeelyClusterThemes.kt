@@ -287,9 +287,9 @@ internal class GeelyUltraThemeRenderer(context: Context) {
     }
 
     /**
-     * Centered bare music visualizer & song/lyrics line positioned in the bottom center strip
-     * (`baselineY = 688f`) between the factory QNX bottom-left and bottom-right status wings,
-     * with no capsule backdrop or border so it blends directly into the factory bottom bar.
+     * Centered bare music visualizer & song/lyrics line positioned cleanly above the factory QNX
+     * bottom center media strip (`Y ≈ 656..704`, which QNX composites above Android), unified
+     * across CarPlay, native head-unit music, map, album, and clock modes at `baselineY = 622f`.
      */
     fun drawUltraBottomMusicBar(
         canvas: Canvas,
@@ -301,8 +301,9 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         nowMs: Long,
         fallbackTime: String,
         fallbackFuel: String,
+        overDarkBackdrop: Boolean = false,
     ): Boolean {
-        val useLightPalette = style.supportsLightMode && !nightMode
+        val useLightPalette = !overDarkBackdrop && style.supportsLightMode && !nightMode
 
         val title = songTitle?.trim().orEmpty()
         if (title.isEmpty()) {
@@ -312,25 +313,31 @@ internal class GeelyUltraThemeRenderer(context: Context) {
             textPaint.textSize = 21f
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.color = if (useLightPalette) Color.rgb(36, 44, 54) else Color.argb(232, 232, 238, 246)
-            val text = ellipsize(parts.joinToString("   ·   "), textPaint, 420f)
-            canvas.drawText(text, 960f, 687f, textPaint)
+            if (!useLightPalette) {
+                textPaint.setShadowLayer(4f, 0f, 1.5f, Color.argb(150, 0, 0, 0))
+            }
+            val text = ellipsize(parts.joinToString("   ·   "), textPaint, 460f)
+            canvas.drawText(text, 960f, 621f, textPaint)
+            if (!useLightPalette) {
+                textPaint.clearShadowLayer()
+            }
             return false
         }
 
-        val textColor = if (useLightPalette) Color.rgb(24, 32, 42) else Color.argb(246, 246, 249, 253)
-        val eqColor = if (useLightPalette) accentColor else withAlpha(accentColor, 240)
+        val textColor = if (useLightPalette) Color.rgb(24, 32, 42) else Color.argb(248, 248, 250, 253)
+        val eqColor = if (useLightPalette) accentColor else withAlpha(accentColor, 245)
 
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textPaint.textSize = 24f
         textPaint.textAlign = Paint.Align.LEFT
-        val displayTitle = ellipsize(title, textPaint, 400f)
+        val displayTitle = ellipsize(title, textPaint, 520f)
         val textW = textPaint.measureText(displayTitle)
         val eqW = 24f
         val gap = 10f
         val totalW = eqW + gap + textW
 
         val startX = 960f - totalW / 2f
-        val baselineY = 688f
+        val baselineY = 622f
 
         val phase = (nowMs % 1200L) / 1200f * (2f * PI.toFloat())
         val h1 = if (isPlaying) 6f + 6f * (0.5f + 0.5f * sin(phase)) else 6f
@@ -342,8 +349,14 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         canvas.drawRoundRect(startX + 8f, barBottom - h2, startX + 12.5f, barBottom, 2f, 2f, fillPaint)
         canvas.drawRoundRect(startX + 16f, barBottom - h3, startX + 20.5f, barBottom, 2f, 2f, fillPaint)
 
+        if (!useLightPalette) {
+            textPaint.setShadowLayer(5f, 0f, 1.5f, Color.argb(175, 0, 0, 0))
+        }
         textPaint.color = textColor
         canvas.drawText(displayTitle, startX + eqW + gap, baselineY, textPaint)
+        if (!useLightPalette) {
+            textPaint.clearShadowLayer()
+        }
 
         return isPlaying
     }
