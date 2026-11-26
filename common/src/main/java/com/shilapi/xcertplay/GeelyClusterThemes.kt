@@ -134,7 +134,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
      * Centered large digital clock (`HH:mm`) + date/weekday when standby or when CarPlay is not
      * connected, styled to match the active theme's typography and day/night palette.
      */
-    fun drawStandbyWatermark(
+    fun drawStandbyClock(
         canvas: Canvas,
         style: GeelyClusterThemeStyle,
         nightMode: Boolean,

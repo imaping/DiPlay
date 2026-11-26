@@ -1053,9 +1053,17 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
 
     private val blurPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val toastStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val toastTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        textSize = 23f
+    }
+    private val toastRect = RectF()
     private val centerCoverClip = Path()
     private val centerCoverRect = RectF()
     private val timeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private var modeToastText: String? = null
+    private var modeToastStartMs: Long = 0L
 
     init {
         isClickable = false
@@ -1089,6 +1097,14 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             nowPlayingActive = playing
             invalidate()
         }
+    }
+
+    fun hasUsableArtwork(): Boolean = rawArtwork != null && rawArtwork?.isRecycled == false
+
+    fun showModeSwitchToast(label: String) {
+        modeToastText = label
+        modeToastStartMs = SystemClock.uptimeMillis()
+        invalidate()
     }
 
     /** Clears CarPlay-only media/navigation state on phone disconnect while keeping dials running. */
@@ -1189,24 +1205,43 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             colorTransition.colorAt(nowElapsed)
         }
 
-        // 1. Background / Vignette / Standby Clock Backdrop
+        // 1. Background / Vignette / Album / Standby Clock Backdrop (supports AUTO / MAP / ALBUM / CLOCK)
         val hasAlbumArt = hasCarPlayFeed && rawArtwork != null && rawArtwork?.isRecycled == false
-        var showingCenterClock = false
-        if (!effectiveRouteActive && config.albumArtEnabled && hasAlbumArt) {
-            if (drawBlurredAlbumBackground(canvas)) {
-                needsNextFrame = true
+        val effectiveDisplayMode = when (config.centerMode) {
+            GeelyClusterCenterMode.MAP -> if (hasCarPlayFeed) GeelyClusterCenterMode.MAP else GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.ALBUM -> when {
+                hasAlbumArt -> GeelyClusterCenterMode.ALBUM
+                effectiveRouteActive -> GeelyClusterCenterMode.MAP
+                else -> GeelyClusterCenterMode.CLOCK
             }
-            if (config.mapVignetteEnabled) {
-                ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = true)
+            GeelyClusterCenterMode.CLOCK -> GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.AUTO -> when {
+                !effectiveRouteActive && config.albumArtEnabled && hasAlbumArt -> GeelyClusterCenterMode.ALBUM
+                effectiveRouteActive -> GeelyClusterCenterMode.MAP
+                else -> GeelyClusterCenterMode.CLOCK
             }
-            drawCenteredAlbumCover(canvas)
-        } else {
-            if (config.mapVignetteEnabled || !effectiveRouteActive) {
-                ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, effectiveRouteActive)
+        }
+        val showingCenterMap = effectiveDisplayMode == GeelyClusterCenterMode.MAP
+        val showingCenterClock = effectiveDisplayMode == GeelyClusterCenterMode.CLOCK
+
+        when (effectiveDisplayMode) {
+            GeelyClusterCenterMode.ALBUM -> {
+                if (drawBlurredAlbumBackground(canvas)) {
+                    needsNextFrame = true
+                }
+                if (config.mapVignetteEnabled) {
+                    ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = true)
+                }
+                drawCenteredAlbumCover(canvas, top = if (effectiveRouteActive) 240f else 172f)
             }
-            if (!effectiveRouteActive) {
-                ultraThemeRenderer.drawStandbyWatermark(canvas, themeStyle, nightMode, currentAccent)
-                showingCenterClock = true
+            GeelyClusterCenterMode.MAP -> {
+                if (config.mapVignetteEnabled) {
+                    ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = true)
+                }
+            }
+            else -> {
+                ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = false)
+                ultraThemeRenderer.drawStandbyClock(canvas, themeStyle, nightMode, currentAccent)
             }
         }
 
@@ -1237,7 +1272,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             canvas.translate(RIGHT_DIAL_X, DIAL_TOP_Y)
             canvas.scale(DIAL_SCALE, DIAL_SCALE)
             canvas.clipRect(0f, 0f, 520f, 520f)
-            val rightArtwork = if (effectiveRouteActive && config.albumArtEnabled && hasAlbumArt) rawArtwork else null
+            val rightArtwork = if (showingCenterMap && config.albumArtEnabled && hasAlbumArt) rawArtwork else null
             val animatingRight = ultraThemeRenderer.drawRightTachDial(
                 canvas = canvas,
                 style = themeStyle,
@@ -1281,6 +1316,10 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
         }
 
+        if (!previewMode && drawModeSwitchToastIfActive(canvas, themeStyle, currentAccent, SystemClock.uptimeMillis())) {
+            needsNextFrame = true
+        }
+
         canvas.restoreToCount(save)
         if (needsNextFrame) {
             postInvalidateOnAnimation()
@@ -1293,7 +1332,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         if (curBlur == null && prevBlur == null) return false
 
         val nowUptime = SystemClock.uptimeMillis()
-        val progress = ((nowUptime - artworkTransitionStartMs).toFloat() / 420f).coerceIn(0f, 1f)
+        val progress = if (previewMode) 1f else ((nowUptime - artworkTransitionStartMs).toFloat() / 420f).coerceIn(0f, 1f)
         val dst = RectF(0f, 0f, 1920f, 720f)
 
         if (prevBlur != null && !prevBlur.isRecycled && progress < 1f) {
@@ -1309,12 +1348,11 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         return progress < 1f
     }
 
-    private fun drawCenteredAlbumCover(canvas: Canvas) {
+    private fun drawCenteredAlbumCover(canvas: Canvas, top: Float = 172f) {
         val art = rawArtwork ?: return
         if (art.isRecycled) return
         val size = 280f
         val left = (1920f - size) / 2f
-        val top = 172f
         centerCoverRect.set(left, top, left + size, top + size)
 
         // Subtle outer shadow card
@@ -1338,7 +1376,57 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         canvas.restoreToCount(save)
     }
 
+    private fun drawModeSwitchToastIfActive(
+        canvas: Canvas,
+        style: GeelyClusterThemeStyle,
+        accentColor: Int,
+        nowUptimeMs: Long,
+    ): Boolean {
+        val label = modeToastText ?: return false
+        val elapsed = nowUptimeMs - modeToastStartMs
+        if (elapsed < 0L || elapsed > MODE_TOAST_DURATION_MS) {
+            modeToastText = null
+            return false
+        }
+        val alphaFrac = when {
+            elapsed < 140L -> elapsed / 140f
+            elapsed > MODE_TOAST_DURATION_MS - 320L -> (MODE_TOAST_DURATION_MS - elapsed) / 320f
+            else -> 1f
+        }.coerceIn(0f, 1f)
+        val light = style.supportsLightMode && !nightMode
+
+        toastTextPaint.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+        val textW = toastTextPaint.measureText(label)
+        val pillW = (textW + 64f).coerceIn(220f, 460f)
+        val pillH = 48f
+        val left = 960f - pillW / 2f
+        val top = 34f
+        toastRect.set(left, top, left + pillW, top + pillH)
+
+        val bgAlpha = ((if (light) 232 else 224) * alphaFrac).roundToInt().coerceIn(0, 255)
+        scrimPaint.color = if (light) Color.argb(bgAlpha, 248, 250, 253) else Color.argb(bgAlpha, 16, 22, 32)
+        canvas.drawRoundRect(toastRect, 24f, 24f, scrimPaint)
+
+        toastStrokePaint.strokeWidth = 1.8f
+        toastStrokePaint.color = Color.argb(
+            (200 * alphaFrac).roundToInt().coerceIn(0, 255),
+            Color.red(accentColor),
+            Color.green(accentColor),
+            Color.blue(accentColor),
+        )
+        canvas.drawRoundRect(toastRect, 24f, 24f, toastStrokePaint)
+
+        toastTextPaint.color = if (light) {
+            Color.argb((245 * alphaFrac).roundToInt(), 24, 34, 48)
+        } else {
+            Color.argb((248 * alphaFrac).roundToInt(), 245, 248, 252)
+        }
+        canvas.drawText(label, 960f, top + 32f, toastTextPaint)
+        return true
+    }
+
     companion object {
+        private const val MODE_TOAST_DURATION_MS = 1_650L
         private const val DIAL_SCALE = 0.92f
         private const val DIAL_TOP_Y = 68f
         private const val LEFT_DIAL_X = 112f

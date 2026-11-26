@@ -555,6 +555,7 @@ internal object GeelyClusterEnhancer {
         syncStandaloneOverlayWindow(context.applicationContext)
         overlayWindow?.view?.fullScreen = true
         activePresentationSelfDrawView?.fullScreen = true
+        syncClusterWheelKeyActive(context.applicationContext)
     }
 
     /** Called in `ClusterMapPresentation.onStop()`. */
@@ -587,6 +588,54 @@ internal object GeelyClusterEnhancer {
             lanes = emptyList()
             invalidate()
         }
+        hostAppContext?.let(::syncClusterWheelKeyActive)
+    }
+
+    /**
+     * Cycles the center display content between `MAP`, `ALBUM`, and `CLOCK` when triggered by the
+     * user's bound steering-wheel button (long press or double click).
+     */
+    fun cycleCenterMode(context: Context): String {
+        val app = context.applicationContext
+        val cfg = GeelyClusterPrefs.load(app)
+        val hasCarPlay = isFullScreenPresentationActive
+        val hasArtwork = currentFakeUltraView?.hasUsableArtwork() == true
+        val routeNow = hasCarPlay && latestGuidance != null
+
+        val available = ArrayList<GeelyClusterCenterMode>(3)
+        if (hasCarPlay) available.add(GeelyClusterCenterMode.MAP)
+        if (hasCarPlay && hasArtwork) available.add(GeelyClusterCenterMode.ALBUM)
+        available.add(GeelyClusterCenterMode.CLOCK)
+
+        val currentVisible = when (cfg.centerMode) {
+            GeelyClusterCenterMode.MAP -> if (hasCarPlay) GeelyClusterCenterMode.MAP else GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.ALBUM -> if (hasCarPlay && hasArtwork) GeelyClusterCenterMode.ALBUM else GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.CLOCK -> GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.AUTO -> when {
+                !routeNow && cfg.albumArtEnabled && hasArtwork -> GeelyClusterCenterMode.ALBUM
+                routeNow -> GeelyClusterCenterMode.MAP
+                else -> GeelyClusterCenterMode.CLOCK
+            }
+        }
+
+        if (available.size <= 1) {
+            currentFakeUltraView?.showModeSwitchToast("大号数字时钟（未连接 CarPlay）")
+            return "CLOCK(no-carplay)"
+        }
+
+        val currentIdx = available.indexOf(currentVisible)
+        val nextMode = available[(currentIdx + 1) % available.size]
+        GeelyClusterPrefs.save(app, cfg.copy(centerMode = nextMode))
+        refreshConfig(app)
+        runOnMain {
+            currentFakeUltraView?.showModeSwitchToast("仪表显示 · ${nextMode.displayName}")
+        }
+        return nextMode.name
+    }
+
+    private fun syncClusterWheelKeyActive(context: Context) {
+        val active = isFullScreenPresentationActive || isPersistentThemeActive()
+        EcarxKx11WheelKeys.setClusterActive(context, active)
     }
 
     /** Called when day/night mode changes on `ClusterMapPresentation`. */
@@ -641,6 +690,8 @@ internal object GeelyClusterEnhancer {
             }
             activePresentationSelfDrawView?.visibility =
                 if (overlayWindow?.attached == true) View.INVISIBLE else View.VISIBLE
+            syncClusterWheelKeyActive(appCtx)
+            EcarxKx11WheelKeys.settingsChanged()
         }
     }
 
@@ -672,6 +723,7 @@ internal object GeelyClusterEnhancer {
                 invalidate()
             }
             GeelyClusterKeepAliveService.start(appContext)
+            syncClusterWheelKeyActive(appContext)
             if (requestFullScreen) {
                 ensureDimController(appContext).forceReenterFullScreenMap("theme-launch")
                 if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(true, appContext)
@@ -689,6 +741,7 @@ internal object GeelyClusterEnhancer {
                 invalidate()
             }
             persistentThemeWindow = newWindow
+            syncClusterWheelKeyActive(appContext)
             // Hide any in-presentation duplicate dial view if toggled on mid-session.
             activeFakeUltraView?.visibility = View.GONE
             // Re-attach the HUD/turn-card overlay above the newly created theme window so navigation
@@ -712,6 +765,7 @@ internal object GeelyClusterEnhancer {
         closePersistentThemeWindow()
         activeFakeUltraView?.visibility = View.VISIBLE
         GeelyClusterKeepAliveService.stop(appContext)
+        syncClusterWheelKeyActive(appContext)
         if (wasAttached && handBackIfIdle && !isFullScreenPresentationActive) {
             activeDimController?.restoreClassicCluster()
             if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(false, appContext)
@@ -833,6 +887,31 @@ private class GeelyCompositePreviewView(context: Context) : View(context) {
         previewMode = true
         routeActive = true
     }
+    private val demoPreviewArtwork: android.graphics.Bitmap by lazy { createDemoPreviewArtwork() }
+
+    private fun createDemoPreviewArtwork(): android.graphics.Bitmap {
+        val bmp = android.graphics.Bitmap.createBitmap(256, 256, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.shader = android.graphics.LinearGradient(
+            0f, 0f, 256f, 256f,
+            intArrayOf(Color.rgb(28, 72, 138), Color.rgb(112, 46, 134), Color.rgb(218, 92, 68)),
+            floatArrayOf(0f, 0.55f, 1f),
+            android.graphics.Shader.TileMode.CLAMP,
+        )
+        c.drawRect(0f, 0f, 256f, 256f, p)
+        p.shader = null
+        p.color = Color.argb(65, 255, 255, 255)
+        c.drawCircle(128f, 118f, 62f, p)
+        p.color = Color.argb(190, 255, 255, 255)
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        p.textSize = 42f
+        c.drawText("♪", 128f, 132f, p)
+        p.textSize = 20f
+        c.drawText("ALBUM", 128f, 214f, p)
+        return bmp
+    }
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -871,9 +950,19 @@ private class GeelyCompositePreviewView(context: Context) : View(context) {
         bgPaint.color = Color.rgb(8, 11, 16)
         canvas.drawRect(0f, 720f, 1920f, 1080f, bgPaint)
 
-        // 3. Render dual dials, vignette, center clock & bottom bar in 1920x720
-        fakeUltraView.carPlayConnected = previewRouteActive
+        // 3. Render dual dials, vignette, center clock / album / map & bottom bar in 1920x720
+        val previewCarPlay = previewRouteActive ||
+            config.centerMode == GeelyClusterCenterMode.MAP ||
+            config.centerMode == GeelyClusterCenterMode.ALBUM
+        fakeUltraView.carPlayConnected = previewCarPlay
         fakeUltraView.nightMode = previewNight
+        if (config.centerMode == GeelyClusterCenterMode.ALBUM) {
+            fakeUltraView.setArtwork(demoPreviewArtwork)
+            fakeUltraView.setMusicInfo("千千阙歌 · 陈慧娴", true)
+        } else if (!previewRouteActive) {
+            fakeUltraView.setArtwork(null)
+            fakeUltraView.setMusicInfo(null, false)
+        }
         fakeUltraView.measure(
             MeasureSpec.makeMeasureSpec(1920, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(720, MeasureSpec.EXACTLY),
@@ -1099,6 +1188,7 @@ private class GeelyClusterSettingsPanel(
     }
 
     fun selectTab(index: Int) {
+        EcarxKx11WheelKeys.cancelLearning()
         selectedTab = index
         updateTabButtonStyles()
         rebuildTabContent()
@@ -1299,12 +1389,99 @@ private class GeelyClusterSettingsPanel(
         addSwitchRow(
             container = container,
             title = "非导航时显示专辑封面",
-            subtitle = "非导航时显示上下居中的全宽模糊封面背景及中央圆角封面；导航开始或没有封面时显示地图。",
+            subtitle = "自动模式下，非导航时显示全宽模糊封面背景及中央圆角封面；导航开始或没有封面时显示地图。",
             checked = config.albumArtEnabled,
         ) { checked ->
             config = config.copy(albumArtEnabled = checked)
             onConfigUpdated()
         }
+
+        addSectionTitle(container, "中央显示切换与方向盘按键")
+        val centerModeRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(2), 0, dp(8))
+        }
+        for ((idx, mode) in GeelyClusterCenterMode.entries.withIndex()) {
+            val active = config.centerMode == mode
+            val btn = createActionButton(mode.shortLabel, selected = active) {
+                config = config.copy(centerMode = mode)
+                onConfigUpdated()
+                rebuildTabContent()
+            }
+            centerModeRow.addView(
+                btn,
+                LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    if (idx > 0) leftMargin = dp(6)
+                },
+            )
+        }
+        container.addView(centerModeRow)
+
+        val keyRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(6))
+        }
+        fun keyBindLabel(): String = if (config.centerSwitchKeyCode > 0) {
+            "切换按键 · ${config.centerSwitchKeyCode}（${config.centerSwitchTrigger.shortLabel}）"
+        } else {
+            "绑定方向盘切换按键 · 未设置"
+        }
+        lateinit var bindKeyBtn: Button
+        bindKeyBtn = createActionButton(keyBindLabel(), selected = config.centerSwitchKeyCode > 0) {
+            bindKeyBtn.text = "现在请按下方向盘按键…"
+            val started = EcarxKx11WheelKeys.learnClusterSwitchKey(
+                context = activity,
+                cancelled = {
+                    activity.runOnUiThread { bindKeyBtn.text = keyBindLabel() }
+                },
+                done = { learnedCode ->
+                    activity.runOnUiThread {
+                        config = config.copy(centerSwitchKeyCode = learnedCode)
+                        onConfigUpdated()
+                        val siriSameKey = WheelZoomSettings.siriKey(activity) &&
+                            WheelZoomSettings.key(activity, WheelZoomSettings.Role.SIRI)
+                                ?.let { EcarxKx11WheelKeys.isGeelyInputKey(it) && it.code == learnedCode } == true
+                        val tip = if (siriSameKey && config.centerSwitchTrigger == GeelyClusterSwitchTrigger.DOUBLE_CLICK) {
+                            "已绑定按键 $learnedCode（与 Siri 共键建议改用「长按」触发）"
+                        } else {
+                            "已绑定仪表切换按键：$learnedCode（${config.centerSwitchTrigger.displayName}切换）"
+                        }
+                        Toast.makeText(activity, tip, Toast.LENGTH_LONG).show()
+                        rebuildTabContent()
+                    }
+                },
+            )
+            if (!started) {
+                bindKeyBtn.text = keyBindLabel()
+                Toast.makeText(activity, "当前车机不支持吉利方向盘输入服务", Toast.LENGTH_SHORT).show()
+            }
+        }
+        val triggerBtn = createActionButton("触发：${config.centerSwitchTrigger.shortLabel}") {
+            val next = config.centerSwitchTrigger.next()
+            config = config.copy(centerSwitchTrigger = next)
+            onConfigUpdated()
+            rebuildTabContent()
+        }
+        keyRow.addView(bindKeyBtn, LinearLayout.LayoutParams(0, dp(46), 1.9f).apply { marginEnd = dp(6) })
+        keyRow.addView(triggerBtn, LinearLayout.LayoutParams(0, dp(46), 0.9f))
+        if (config.centerSwitchKeyCode > 0) {
+            val clearBtn = createActionButton("清除") {
+                EcarxKx11WheelKeys.cancelLearning()
+                config = config.copy(centerSwitchKeyCode = 0)
+                onConfigUpdated()
+                rebuildTabContent()
+            }
+            keyRow.addView(clearBtn, LinearLayout.LayoutParams(0, dp(46), 0.65f).apply { leftMargin = dp(6) })
+        }
+        container.addView(keyRow)
+        container.addView(
+            TextView(activity).apply {
+                text = "通过长按或连点（双击）已绑定的方向盘按键，在「导航地图 / 专辑封面 / 大号数字时钟」之间循环切换。若与短按 Siri 共用同一按键，请使用「长按」触发，互不冲突。"
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setPadding(dp(2), 0, dp(2), dp(6))
+            }
+        )
 
         addSectionTitle(container, "地图视觉")
         addSwitchRow(
@@ -1442,6 +1619,26 @@ private class GeelyClusterSettingsPanel(
             }
             container.addView(themeRow)
         }
+
+        val previewCenterRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(8))
+        }
+        for ((idx, mode) in GeelyClusterCenterMode.entries.withIndex()) {
+            val active = config.centerMode == mode
+            val btn = createActionButton(mode.shortLabel, selected = active) {
+                config = config.copy(centerMode = mode)
+                onConfigUpdated()
+                rebuildTabContent()
+            }
+            previewCenterRow.addView(
+                btn,
+                LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+                    if (idx > 0) leftMargin = dp(6)
+                },
+            )
+        }
+        container.addView(previewCenterRow)
 
         val quickRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1774,7 +1971,10 @@ internal class GeelyClusterSettingsDialog(
             android.R.style.Theme_Light_NoTitleBar_Fullscreen
         }
         val dialog = Dialog(activity, themeRes)
-        dialog.setOnDismissListener { onDismiss() }
+        dialog.setOnDismissListener {
+            EcarxKx11WheelKeys.cancelLearning()
+            onDismiss()
+        }
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(colors.background))

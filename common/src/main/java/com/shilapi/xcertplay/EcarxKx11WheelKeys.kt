@@ -33,6 +33,7 @@ internal object EcarxKx11WheelKeys {
     private const val INPUT_CLASS = "com.geely.inputservice.InputService"
     private const val RETRY_MILLIS = 3_000L
     private const val LEARN_COOLDOWN_MILLIS = 1_500L
+    private const val CLUSTER_DOUBLE_CLICK_INTERVAL_MS = 600L
 
     internal const val DEVICE_NAME = "geely-inputservice"
 
@@ -84,19 +85,29 @@ internal object EcarxKx11WheelKeys {
         val done: (WheelKey) -> Unit,
     )
 
+    private class ClusterLearningSession(
+        val cancelled: () -> Unit,
+        val done: (Int) -> Unit,
+    )
+
     private val handler = Handler(Looper.getMainLooper())
     private val siriDebounce = WheelSiriKey()
+    private val clusterDoublePress = WheelSiriKey()
 
     @Volatile
     private var appContext: Context? = null
     @Volatile
     private var sessionActive = false
+    @Volatile
+    private var clusterActive = false
     private var bound = false
     private var manager: IInputManager? = null
     private var listener: IInputListener? = null
     private var registeredCodes: IntArray = IntArray(0)
     @Volatile
     private var learning: LearningSession? = null
+    @Volatile
+    private var clusterLearning: ClusterLearningSession? = null
     private var ignoreRuntimeKeyCode: Int? = null
     private var ignoreRuntimeUntilElapsedMs = 0L
     private var doubleSiriFirstPressWasInCall = false
@@ -130,13 +141,27 @@ internal object EcarxKx11WheelKeys {
     /** Stops runtime listening when the CarPlay session ends. */
     @Synchronized
     fun stop() {
-        if (!sessionActive && !bound && learning == null) return
+        if (!sessionActive && !clusterActive && !bound && learning == null && clusterLearning == null) return
         sessionActive = false
         clearDoubleSiriLocked()
         syncBindingLocked()
     }
 
-    /** Refreshes subscriptions after any [WheelZoomSettings] change. */
+    /** Tracks whether the Geely cluster display (CarPlay or standalone persistent theme) is active. */
+    @Synchronized
+    fun setClusterActive(context: Context, active: Boolean) {
+        if (!EcarxKx11HeadUnit.detected) return
+        appContext = context.applicationContext
+        if (clusterActive == active && (!active || manager != null || bound)) {
+            syncBindingLocked()
+            return
+        }
+        clusterActive = active
+        if (!active) clusterDoublePress.reset()
+        syncBindingLocked()
+    }
+
+    /** Refreshes subscriptions after any [WheelZoomSettings] or [GeelyClusterPrefs] change. */
     fun settingsChanged() {
         if (!EcarxKx11HeadUnit.detected) return
         synchronized(this) {
@@ -161,48 +186,89 @@ internal object EcarxKx11WheelKeys {
             return false
         }
         val previous: LearningSession?
+        val previousCluster: ClusterLearningSession?
         synchronized(this) {
             appContext = context.applicationContext
             previous = learning
+            previousCluster = clusterLearning
+            clusterLearning = null
             learning = LearningSession(role, cancelled, refused, done)
             handler.removeCallbacks(endLearning)
             handler.postDelayed(endLearning, WheelKeyService.LEARNING_TIMEOUT_MILLIS)
             syncBindingLocked()
         }
         previous?.cancelled?.invoke()
+        previousCluster?.cancelled?.invoke()
+        return true
+    }
+
+    /**
+     * Enters key-learning mode on `com.geely.inputservice` to bind a steering-wheel button for
+     * switching the Geely cluster center display (Map / Album / Clock). Returns `false` off KX11.
+     */
+    fun learnClusterSwitchKey(
+        context: Context,
+        cancelled: () -> Unit = {},
+        done: (Int) -> Unit,
+    ): Boolean {
+        if (!EcarxKx11HeadUnit.detected) return false
+        val previous: LearningSession?
+        val previousCluster: ClusterLearningSession?
+        synchronized(this) {
+            appContext = context.applicationContext
+            previous = learning
+            previousCluster = clusterLearning
+            learning = null
+            clusterLearning = ClusterLearningSession(cancelled, done)
+            handler.removeCallbacks(endLearning)
+            handler.postDelayed(endLearning, WheelKeyService.LEARNING_TIMEOUT_MILLIS)
+            syncBindingLocked()
+        }
+        previous?.cancelled?.invoke()
+        previousCluster?.cancelled?.invoke()
         return true
     }
 
     /** Cancels any active KX11 key-learning session and restores runtime binding state. */
     fun cancelLearning() {
-        val previous = synchronized(this) {
-            val current = learning ?: return
+        val cancelledPair = synchronized(this) {
+            val prevRole = learning
+            val prevCluster = clusterLearning
+            if (prevRole == null && prevCluster == null) return
             learning = null
+            clusterLearning = null
             handler.removeCallbacks(endLearning)
             syncBindingLocked()
-            current
+            prevRole to prevCluster
         }
-        previous.cancelled.invoke()
+        cancelledPair.first?.cancelled?.invoke()
+        cancelledPair.second?.cancelled?.invoke()
     }
 
     private fun runtimeCodes(context: Context): IntArray {
         val codes = LinkedHashSet<Int>()
-        if (WheelZoomSettings.siriKey(context)) {
-            WheelZoomSettings.key(context, WheelZoomSettings.Role.SIRI)
-                ?.takeIf(::isGeelyInputKey)
-                ?.let { codes.add(it.code) }
+        if (sessionActive) {
+            if (WheelZoomSettings.siriKey(context)) {
+                WheelZoomSettings.key(context, WheelZoomSettings.Role.SIRI)
+                    ?.takeIf(::isGeelyInputKey)
+                    ?.let { codes.add(it.code) }
+            }
+            if (WheelZoomSettings.mediaPlayPause(context)) {
+                WheelZoomSettings.key(context, WheelZoomSettings.Role.MEDIA_PLAY_PAUSE)
+                    ?.takeIf(::isGeelyInputKey)
+                    ?.let { codes.add(it.code) }
+            }
         }
-        if (WheelZoomSettings.mediaPlayPause(context)) {
-            WheelZoomSettings.key(context, WheelZoomSettings.Role.MEDIA_PLAY_PAUSE)
-                ?.takeIf(::isGeelyInputKey)
-                ?.let { codes.add(it.code) }
+        if (sessionActive || clusterActive) {
+            val clusterCode = GeelyClusterPrefs.load(context).centerSwitchKeyCode
+            if (clusterCode > 0) codes.add(clusterCode)
         }
         return codes.toIntArray()
     }
 
     private fun desiredCodesLocked(context: Context): IntArray = when {
-        learning != null -> LEARNABLE_CODES
-        sessionActive -> runtimeCodes(context)
+        learning != null || clusterLearning != null -> LEARNABLE_CODES
+        sessionActive || clusterActive -> runtimeCodes(context)
         else -> IntArray(0)
     }
 
@@ -259,7 +325,7 @@ internal object EcarxKx11WheelKeys {
         }.onSuccess {
             listener = nextListener
             registeredCodes = codes.copyOf()
-            val mode = if (learning != null) "learn" else "runtime"
+            val mode = if (learning != null || clusterLearning != null) "learn" else "runtime"
             note("KX11 input service registered ($mode) codes=${codes.joinToString()}")
         }.onFailure { error ->
             listener = null
@@ -271,13 +337,13 @@ internal object EcarxKx11WheelKeys {
     private fun createListener(): IInputListener = object : IInputListener.Stub() {
         override fun onKeyCodeEvent(keyCode: Int, event: Int, softKeyFunction: Int) {
             // Action 0 = key down on com.geely.inputservice; capture immediately during learning.
-            if (event == 0 && learning != null) {
+            if (event == 0 && (learning != null || clusterLearning != null)) {
                 handleLearnKey(keyCode)
             }
         }
 
         override fun onShortClick(keyCode: Int, softKeyFunction: Int) {
-            if (learning != null) {
+            if (learning != null || clusterLearning != null) {
                 handleLearnKey(keyCode)
                 return
             }
@@ -289,7 +355,7 @@ internal object EcarxKx11WheelKeys {
         override fun onHoldingPressStopped(keyCode: Int, softKeyFunction: Int) = Unit
 
         override fun onLongPressTriggered(keyCode: Int, softKeyFunction: Int) {
-            if (learning != null) {
+            if (learning != null || clusterLearning != null) {
                 handleLearnKey(keyCode)
                 return
             }
@@ -300,18 +366,32 @@ internal object EcarxKx11WheelKeys {
     }
 
     private fun handleLearnKey(keyCode: Int) {
-        val captured: LearningSession
+        val capturedRole: LearningSession?
+        val capturedCluster: ClusterLearningSession?
         val context: Context
         synchronized(this) {
-            captured = learning ?: return
+            capturedRole = learning
+            capturedCluster = clusterLearning
+            if (capturedRole == null && capturedCluster == null) return
             context = appContext ?: return
             learning = null
+            clusterLearning = null
             handler.removeCallbacks(endLearning)
             // Suppress the release/click of the press that just completed key learning.
             ignoreRuntimeKeyCode = keyCode
             ignoreRuntimeUntilElapsedMs = SystemClock.elapsedRealtime() + LEARN_COOLDOWN_MILLIS
         }
         handler.post {
+            if (capturedCluster != null) {
+                val updated = GeelyClusterPrefs.load(context).copy(centerSwitchKeyCode = keyCode)
+                GeelyClusterPrefs.save(context, updated)
+                GeelyClusterEnhancer.refreshConfig(context)
+                note("KX11 cluster switch key is now $keyCode")
+                capturedCluster.done.invoke(keyCode)
+                synchronized(this) { syncBindingLocked() }
+                return@post
+            }
+            val captured = capturedRole ?: return@post
             val enabled = when (captured.role) {
                 WheelZoomSettings.Role.SIRI -> WheelZoomSettings.siriKey(context)
                 WheelZoomSettings.Role.MEDIA_PLAY_PAUSE -> WheelZoomSettings.mediaPlayPause(context)
@@ -339,7 +419,7 @@ internal object EcarxKx11WheelKeys {
     private fun handleRuntimeKey(keyCode: Int, longPress: Boolean) {
         val context: Context
         synchronized(this) {
-            if (!sessionActive) return
+            if (!sessionActive && !clusterActive) return
             context = appContext ?: return
             val now = SystemClock.elapsedRealtime()
             if (ignoreRuntimeKeyCode == keyCode && now <= ignoreRuntimeUntilElapsedMs) {
@@ -351,6 +431,35 @@ internal object EcarxKx11WheelKeys {
     }
 
     private fun dispatchRuntimeKeyOnMain(context: Context, keyCode: Int, longPress: Boolean) {
+        val clusterCfg = GeelyClusterPrefs.load(context)
+        if ((sessionActive || clusterActive) &&
+            clusterCfg.centerSwitchKeyCode != 0 &&
+            keyCode == clusterCfg.centerSwitchKeyCode
+        ) {
+            when (clusterCfg.centerSwitchTrigger) {
+                GeelyClusterSwitchTrigger.LONG_PRESS -> {
+                    if (longPress) {
+                        val result = GeelyClusterEnhancer.cycleCenterMode(context)
+                        note("KX11 cluster switch key $keyCode (long) -> $result")
+                        return
+                    }
+                }
+                GeelyClusterSwitchTrigger.DOUBLE_CLICK -> {
+                    if (!longPress) {
+                        val now = SystemClock.elapsedRealtime()
+                        val action = synchronized(this) {
+                            clusterDoublePress.onDoublePress(now, CLUSTER_DOUBLE_CLICK_INTERVAL_MS)
+                        }
+                        if (action == WheelSiriKey.DoublePressAction.CONFIRMED) {
+                            val result = GeelyClusterEnhancer.cycleCenterMode(context)
+                            note("KX11 cluster switch key $keyCode (double) -> $result")
+                            return
+                        }
+                    }
+                }
+            }
+        }
+
         if (!sessionActive) return
         val wheelKey = toWheelKey(keyCode)
         val calling = inCall(context)
@@ -414,6 +523,7 @@ internal object EcarxKx11WheelKeys {
         cancelDelayedSiriLocked()
         doubleSiriFirstPressWasInCall = false
         siriDebounce.reset()
+        clusterDoublePress.reset()
     }
 
     private fun cancelDelayedSiriLocked() {

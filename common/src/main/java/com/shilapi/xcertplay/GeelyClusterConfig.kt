@@ -32,6 +32,36 @@ internal enum class GeelyClusterAppearanceMode(
     }
 }
 
+internal enum class GeelyClusterCenterMode(
+    val displayName: String,
+    val shortLabel: String,
+) {
+    AUTO("自动（地图 / 专辑 / 时钟）", "自动"),
+    MAP("导航地图", "导航地图"),
+    ALBUM("专辑封面", "专辑封面"),
+    CLOCK("大号数字时钟", "数字时钟");
+
+    companion object {
+        fun fromName(raw: String?): GeelyClusterCenterMode =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: AUTO
+    }
+}
+
+internal enum class GeelyClusterSwitchTrigger(
+    val displayName: String,
+    val shortLabel: String,
+) {
+    LONG_PRESS("长按", "长按"),
+    DOUBLE_CLICK("连点（双击）", "连点");
+
+    fun next(): GeelyClusterSwitchTrigger = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+        fun fromName(raw: String?): GeelyClusterSwitchTrigger =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: LONG_PRESS
+    }
+}
+
 internal enum class GeelyClusterThemeStyle(
     val displayName: String,
     val shortLabel: String,
@@ -155,6 +185,9 @@ internal data class GeelySelfDrawConfig(
     val appearanceMode: GeelyClusterAppearanceMode = GeelyClusterAppearanceMode.AUTO,
     val launchThemeOnStart: Boolean = false,
     val preferredDisplayId: Int = 2,
+    val centerMode: GeelyClusterCenterMode = GeelyClusterCenterMode.AUTO,
+    val centerSwitchKeyCode: Int = 0,
+    val centerSwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
 ) {
     val hasAnySelfDrawOverlay: Boolean
         get() = hudEnabled || cardEnabled || fullscreenCardEnabled || laneEnabled || previewEnabled
@@ -184,6 +217,9 @@ internal object GeelyClusterPrefs {
     private const val KEY_APPEARANCE_MODE = "self_draw_appearance_mode"
     private const val KEY_LAUNCH_THEME_ON_START = "self_draw_launch_theme_on_start"
     private const val KEY_DISPLAY_ID = "display_id"
+    private const val KEY_CENTER_MODE = "self_draw_center_mode"
+    private const val KEY_CENTER_SWITCH_KEY_CODE = "self_draw_center_switch_key_code"
+    private const val KEY_CENTER_SWITCH_TRIGGER = "self_draw_center_switch_trigger"
 
     fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -217,6 +253,9 @@ internal object GeelyClusterPrefs {
             appearanceMode = GeelyClusterAppearanceMode.fromName(sp.getString(KEY_APPEARANCE_MODE, null)),
             launchThemeOnStart = sp.getBoolean(KEY_LAUNCH_THEME_ON_START, false),
             preferredDisplayId = sp.getInt(KEY_DISPLAY_ID, 2),
+            centerMode = GeelyClusterCenterMode.fromName(sp.getString(KEY_CENTER_MODE, null)),
+            centerSwitchKeyCode = sp.getInt(KEY_CENTER_SWITCH_KEY_CODE, 0),
+            centerSwitchTrigger = GeelyClusterSwitchTrigger.fromName(sp.getString(KEY_CENTER_SWITCH_TRIGGER, null)),
         )
     }
 
@@ -238,6 +277,9 @@ internal object GeelyClusterPrefs {
             .putString(KEY_APPEARANCE_MODE, config.appearanceMode.name)
             .putBoolean(KEY_LAUNCH_THEME_ON_START, config.launchThemeOnStart)
             .putInt(KEY_DISPLAY_ID, config.preferredDisplayId)
+            .putString(KEY_CENTER_MODE, config.centerMode.name)
+            .putInt(KEY_CENTER_SWITCH_KEY_CODE, config.centerSwitchKeyCode)
+            .putString(KEY_CENTER_SWITCH_TRIGGER, config.centerSwitchTrigger.name)
         writeArea(editor, "hud", config.hudArea.clamp())
         writeArea(editor, "card", config.cardArea.clamp())
         writeArea(editor, "fullscreen_card", config.fullscreenCardArea.clamp())
