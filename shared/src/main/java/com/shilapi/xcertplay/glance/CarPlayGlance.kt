@@ -40,6 +40,9 @@ object CarPlayGlance {
     /** Lane guidance from 0x5204, on the iAP2 thread; empty when the lane strip goes away. */
     @Volatile var laneListener: ((List<LaneGuidanceLane>) -> Unit)? = null
 
+    /** Optional raw route-guidance observer (0x5201) for head-unit extensions. */
+    @Volatile var routeFrameListener: ((Iap2Frame) -> Unit)? = null
+
     /** The last strip written to the log: Apple Maps repeats it while the overlap lasts. */
     private var loggedLanes: List<LaneGuidanceLane>? = null
 
@@ -61,6 +64,9 @@ object CarPlayGlance {
             }
             laneListener?.invoke(lanes)
             return
+        }
+        if (frame.messageId == BydHudRouteState.ROUTE_GUIDANCE_UPDATE) {
+            routeFrameListener?.invoke(frame)
         }
         val changed = synchronized(this) {
             when (frame.messageId) {
