@@ -97,24 +97,6 @@ internal enum class GeelyClusterThemeStyle(
         shortLabel = "复古微光",
         description = "80s VFD 荧光微点阵底 + 36 枚阶梯荧光柱 + 格栅油量条（支持昼夜）",
         supportsLightMode = true,
-    ),
-    ULTRA_CLASSIC_TICKS(
-        displayName = "Ultra 精密刻度",
-        shortLabel = "精密刻度",
-        description = "双圈精密长短刻度 + 扇区光带 + 右盘档位/RPM（支持昼夜）",
-        supportsLightMode = true,
-    ),
-    ULTRA_MINIMAL_RING(
-        displayName = "Ultra 极简光环",
-        shortLabel = "极简光环",
-        description = "无数字磨砂厚光环 + 流畅主题色弧 + 极简档位与油量弧（支持昼夜）",
-        supportsLightMode = true,
-    ),
-    ULTRA_CLEAN_LIGHT(
-        displayName = "Ultra 现代点刻（自适应昼夜）",
-        shortLabel = "现代点刻",
-        description = "日间陶瓷浅银 / 夜间深石墨 + 圆点刻度 + 圆角进度弧 + 右盘方角封面",
-        supportsLightMode = true,
     );
 
     fun defaultAccentColor(nightMode: Boolean): Int = when (this) {
@@ -123,9 +105,6 @@ internal enum class GeelyClusterThemeStyle(
         AERO_MECHA -> if (nightMode) 0xFF00E5FF.toInt() else 0xFF0284C7.toInt()
         NORDIC_GLASS -> if (nightMode) 0xFF38BDF8.toInt() else 0xFF0369A1.toInt()
         RETRO_VFD -> if (nightMode) 0xFF2EE6A6.toInt() else 0xFF059669.toInt()
-        ULTRA_CLASSIC_TICKS,
-        ULTRA_MINIMAL_RING,
-        ULTRA_CLEAN_LIGHT -> if (nightMode) GeelyColorTransition.DEFAULT_CYAN else 0xFF366A98.toInt()
     }
 
     companion object {

@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
@@ -15,22 +14,17 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Pure SVG-backed multi-theme CarPlay Ultra instrument cluster renderer.
- *
- * All static dial faces, concentric rings, precision ticks, dot ticks, redline zones, and icons
- * are loaded directly from editable SVG assets under `assets/cluster-visual/themes/` via
- * [GeelyVectorSvgCache] (no duplicate Canvas fallback code for static dial faces).
- * Kotlin only draws real-time dynamic telemetry overlays (progress arcs/bands, speed/RPM/gear
- * numerals, fuel progress bar, album art, standby watermark, and bottom song visualizer).
+ * Multi-theme SVG-backed Geely cluster coordinator: draws ambient edge vignettes,
+ * standby large digital clock, floating bottom music/status pill, and delegates the
+ * damped 520x520 left/right dials to [GeelyClusterExtraThemesRenderer].
  */
-internal class GeelyUltraThemeRenderer(private val context: Context) {
-    private val extraThemes = GeelyClusterExtraThemesRenderer(context)
+internal class GeelyUltraThemeRenderer(context: Context) {
+    private val themeDials = GeelyClusterExtraThemesRenderer(context)
     private val leftMainDamped = GeelyDampedFloat(durationMs = 200L)
     private val leftSubDamped = GeelyDampedFloat(durationMs = 700L)
     private val rightMainDamped = GeelyDampedFloat(durationMs = 200L)
@@ -38,13 +32,8 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
     private val arcRect = RectF()
-    private val innerArcRect = RectF()
-    private val coverRect = RectF()
-    private val coverClipPath = Path()
-    private val curvedTextPath = Path()
     private val clockTimeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val clockDateZhFormatter = SimpleDateFormat("M月d日  ·  EEEE", Locale.CHINA)
     private val clockDateIntlFormatter = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
@@ -176,14 +165,13 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
             GeelyClusterThemeStyle.AERO_MECHA -> Typeface.create("sans-serif", Typeface.BOLD_ITALIC)
             GeelyClusterThemeStyle.NORDIC_GLASS -> Typeface.create("sans-serif-light", Typeface.NORMAL)
             GeelyClusterThemeStyle.SPORT_CHRONO -> Typeface.create("sans-serif", Typeface.BOLD)
-            else -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
         val dateTypeface = when (style) {
             GeelyClusterThemeStyle.HERITAGE_GOLD -> Typeface.create(Typeface.SERIF, Typeface.NORMAL)
             GeelyClusterThemeStyle.RETRO_VFD,
             GeelyClusterThemeStyle.AERO_MECHA -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             GeelyClusterThemeStyle.NORDIC_GLASS -> Typeface.create("sans-serif-light", Typeface.NORMAL)
-            else -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            GeelyClusterThemeStyle.SPORT_CHRONO -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
 
         // Theme-specific subtle framing accents around the center clock
@@ -327,7 +315,7 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         val rawSpeed = sensors.speedKmh.valueIfFresh(nowMs) ?: if (previewDemo) 76f else 0f
         val rawFuel = sensors.fuelPercent.valueIfFresh(nowMs) ?: if (previewDemo) 68f else null
 
-        val speedMax = extraThemes.speedMaxFor(style)
+        val speedMax = themeDials.speedMaxFor(style)
         val speedFrac = (rawSpeed / speedMax).coerceIn(0f, 1f)
         val fuelFrac = ((rawFuel ?: 0f) / 100f).coerceIn(0f, 1f)
         leftMainDamped.updateTarget(speedFrac, nowMs)
@@ -337,79 +325,16 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         val curFuelFrac = if (rawFuel != null) leftSubDamped.valueAt(nowMs) else 0f
         val anim = leftMainDamped.isAnimating(nowMs) || (rawFuel != null && leftSubDamped.isAnimating(nowMs))
 
-        if (extraThemes.isExtraTheme(style)) {
-            extraThemes.drawLeftSpeedDial(
-                canvas = canvas,
-                style = style,
-                rawSpeed = rawSpeed,
-                curSpeedFrac = curSpeedFrac,
-                rawFuel = rawFuel,
-                curFuelFrac = curFuelFrac,
-                accentColor = accentColor,
-                nightMode = nightMode,
-            )
-            return anim
-        }
-
-        val cx = 260f
-        val cy = 260f
-        val light = style.supportsLightMode && !nightMode
-        val effectiveAccent = if (light && accentColor == GeelyColorTransition.DEFAULT_CYAN) {
-            Color.rgb(54, 106, 152)
-        } else {
-            accentColor
-        }
-
-        // 1. Static SVG dial face (cached Picture)
-        val assetPath = speedDialAssetPath(style, nightMode)
-        val svgTint = if (style == GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS) effectiveAccent else null
-        if (assetPath.isNotEmpty()) {
-            GeelyVectorSvgCache.getOrLoad(context, assetPath, 520, 520, tintColor = svgTint)?.let {
-                canvas.drawPicture(it)
-            }
-        }
-
-        // 2. Dynamic progress band / arc + scale numerals per theme
-        val sweep = curSpeedFrac * 270f
-        when (style) {
-            GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> {
-                if (sweep > 0.5f) {
-                    val bandCol = if (light) effectiveAccent else blendWithWhite(effectiveAccent, 0.35f)
-                    drawClassicSweepBand(canvas, cx, cy, 152f, 236f, sweep, bandCol, lightMode = light)
-                }
-                val numCol = if (light) Color.rgb(34, 44, 56) else Color.argb(242, 246, 249, 255)
-                drawRadialNumerals(canvas, cx, cy, 194f, (0..180 step 20).map { it.toString() }, 21f, numCol, bold = true)
-                drawFuelTelemetry(canvas, cx, cy, 228f, curFuelFrac, rawFuel, effectiveAccent, lightMode = light)
-            }
-            GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> {
-                if (sweep > 0.5f) {
-                    drawProgressArc(canvas, cx, cy, 212f, 24f, sweep, withAlpha(effectiveAccent, 235))
-                }
-                drawFuelTelemetry(canvas, cx, cy, 212f, curFuelFrac, rawFuel, effectiveAccent, lightMode = light)
-            }
-            GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT -> {
-                if (sweep > 0.5f) {
-                    drawProgressArc(canvas, cx, cy, 220f, 16f, sweep, withAlpha(effectiveAccent, 240))
-                }
-                val numCol = if (light) Color.rgb(46, 54, 64) else Color.argb(232, 236, 242, 248)
-                drawRadialNumerals(canvas, cx, cy, 178f, (0..180 step 20).map { it.toString() }, 20f, numCol, bold = false)
-                drawFuelTelemetry(canvas, cx, cy, 220f, curFuelFrac, rawFuel, effectiveAccent, lightMode = light)
-            }
-            else -> Unit
-        }
-
-        // 3. Giant live speed numeral + km/h
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.typeface = Typeface.create("sans-serif-medium", if (light) Typeface.NORMAL else Typeface.BOLD)
-        textPaint.textSize = if (style == GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS) 104f else 112f
-        textPaint.color = if (light) Color.rgb(34, 40, 48) else Color.WHITE
-        canvas.drawText(rawSpeed.roundToInt().toString(), cx, cy + 20f, textPaint)
-
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-        textPaint.textSize = 24f
-        textPaint.color = if (light) Color.rgb(92, 102, 114) else Color.argb(195, 220, 228, 238)
-        canvas.drawText("km/h", cx, cy + 58f, textPaint)
-
+        themeDials.drawLeftSpeedDial(
+            canvas = canvas,
+            style = style,
+            rawSpeed = rawSpeed,
+            curSpeedFrac = curSpeedFrac,
+            rawFuel = rawFuel,
+            curFuelFrac = curFuelFrac,
+            accentColor = accentColor,
+            nightMode = nightMode,
+        )
         return anim
     }
 
@@ -427,318 +352,24 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
         val rawRpm = sensors.rpm.valueIfFresh(nowMs) ?: if (previewDemo) 2450f else 0f
         val gearText = sensors.gearIfFresh(nowMs) ?: if (previewDemo) "D" else "P"
 
-        val rpmMax = extraThemes.rpmMaxFor(style)
+        val rpmMax = themeDials.rpmMaxFor(style)
         val rpmFrac = (rawRpm / rpmMax).coerceIn(0f, 1f)
         rightMainDamped.updateTarget(rpmFrac, nowMs)
 
         val curRpmFrac = rightMainDamped.valueAt(nowMs)
         val anim = rightMainDamped.isAnimating(nowMs)
 
-        if (extraThemes.isExtraTheme(style)) {
-            extraThemes.drawRightTachDial(
-                canvas = canvas,
-                style = style,
-                rawRpm = rawRpm,
-                curRpmFrac = curRpmFrac,
-                gearText = gearText,
-                accentColor = accentColor,
-                nightMode = nightMode,
-                centerArtwork = centerArtwork,
-            )
-            return anim
-        }
-
-        val cx = 260f
-        val cy = 260f
-        val light = style.supportsLightMode && !nightMode
-        val effectiveAccent = if (light && accentColor == GeelyColorTransition.DEFAULT_CYAN) {
-            Color.rgb(54, 106, 152)
-        } else {
-            accentColor
-        }
-
-        // 1. Static SVG dial face (cached Picture)
-        val assetPath = tachDialAssetPath(style, nightMode)
-        val svgTint = if (style == GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS) effectiveAccent else null
-        if (assetPath.isNotEmpty()) {
-            GeelyVectorSvgCache.getOrLoad(context, assetPath, 520, 520, tintColor = svgTint)?.let {
-                canvas.drawPicture(it)
-            }
-        }
-
-        // 2. Dynamic progress band / arc + scale numerals per theme
-        val sweep = curRpmFrac * 270f
-        when (style) {
-            GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> {
-                if (sweep > 0.5f) {
-                    val bandCol = when {
-                        rawRpm >= 5800f -> Color.rgb(220, 52, 42)
-                        light -> effectiveAccent
-                        else -> blendWithWhite(effectiveAccent, 0.35f)
-                    }
-                    drawClassicSweepBand(canvas, cx, cy, 152f, 236f, sweep, bandCol, lightMode = light)
-                }
-                val numCol = if (light) Color.rgb(34, 44, 56) else Color.argb(242, 246, 249, 255)
-                drawRadialNumerals(
-                    canvas, cx, cy, 194f,
-                    (0..7).map { it.toString() },
-                    22f, numCol,
-                    bold = true, redFromIndex = 6,
-                )
-                drawCurvedEngraving(canvas, cx, cy, 244f, "DEEPLY ADAPTED FOR GEELY", lightMode = light)
-            }
-            GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> {
-                if (sweep > 0.5f) {
-                    val arcCol = if (rawRpm >= 5800f) Color.rgb(232, 68, 52) else withAlpha(effectiveAccent, 235)
-                    drawProgressArc(canvas, cx, cy, 212f, 24f, sweep, arcCol)
-                }
-            }
-            GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT -> {
-                if (sweep > 0.5f) {
-                    val arcCol = if (rawRpm >= 5800f) Color.rgb(232, 86, 58) else withAlpha(effectiveAccent, 240)
-                    drawProgressArc(canvas, cx, cy, 220f, 16f, sweep, arcCol)
-                }
-                val numCol = if (light) Color.rgb(46, 54, 64) else Color.argb(232, 236, 242, 248)
-                drawRadialNumerals(
-                    canvas, cx, cy, 178f,
-                    (0..7).map { it.toString() },
-                    21f, numCol,
-                    bold = false, redFromIndex = 6,
-                )
-            }
-            else -> Unit
-        }
-
-        // 3. Bottom live RPM label
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        textPaint.textSize = 22f
-        textPaint.color = if (light) Color.rgb(58, 68, 80) else Color.argb(215, 232, 238, 245)
-        canvas.drawText("RPM ${rawRpm.roundToInt()}", cx, if (style == GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS) 444f else 426f, textPaint)
-
-        // 4. Center: Album cover (when navigating & available) or live Gear letter
-        if (centerArtwork != null && !centerArtwork.isRecycled) {
-            val coverSize = if (style == GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT) 168f else 176f
-            val cornerR = if (style == GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT) 20f else 24f
-            drawCenteredRoundedCover(canvas, cx, cy - 6f, coverSize, cornerR, centerArtwork)
-        } else {
-            textPaint.typeface = Typeface.create("sans-serif-medium", if (light) Typeface.NORMAL else Typeface.BOLD)
-            textPaint.textSize = if (style == GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS) 104f else 110f
-            textPaint.color = if (light) Color.rgb(34, 40, 48) else Color.WHITE
-            canvas.drawText(gearText, cx, cy + 18f, textPaint)
-
-            textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            textPaint.textSize = 23f
-            textPaint.color = if (light) Color.rgb(92, 102, 114) else Color.argb(185, 220, 228, 236)
-            canvas.drawText(if (gearText == "P") "PARK" else "DRIVE", cx, cy + 56f, textPaint)
-        }
-
-        return anim
-    }
-
-    // -------------------------------------------------------------------------
-    // Dynamic Telemetry Helpers (no static dial geometry duplication)
-    // -------------------------------------------------------------------------
-
-    private fun speedDialAssetPath(style: GeelyClusterThemeStyle, nightMode: Boolean): String = when (style) {
-        GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> if (nightMode) {
-            "cluster-visual/themes/classic-ticks/speed_dial.svg"
-        } else {
-            "cluster-visual/themes/classic-ticks/speed_day.svg"
-        }
-        GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> if (nightMode) {
-            "cluster-visual/themes/minimal-ring/speed_dial.svg"
-        } else {
-            "cluster-visual/themes/minimal-ring/speed_day.svg"
-        }
-        GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT -> if (nightMode) {
-            "cluster-visual/themes/clean-light/speed_night.svg"
-        } else {
-            "cluster-visual/themes/clean-light/speed_day.svg"
-        }
-        else -> ""
-    }
-
-    private fun tachDialAssetPath(style: GeelyClusterThemeStyle, nightMode: Boolean): String = when (style) {
-        GeelyClusterThemeStyle.ULTRA_CLASSIC_TICKS -> if (nightMode) {
-            "cluster-visual/themes/classic-ticks/tach_dial.svg"
-        } else {
-            "cluster-visual/themes/classic-ticks/tach_day.svg"
-        }
-        GeelyClusterThemeStyle.ULTRA_MINIMAL_RING -> if (nightMode) {
-            "cluster-visual/themes/minimal-ring/tach_dial.svg"
-        } else {
-            "cluster-visual/themes/minimal-ring/tach_day.svg"
-        }
-        GeelyClusterThemeStyle.ULTRA_CLEAN_LIGHT -> if (nightMode) {
-            "cluster-visual/themes/clean-light/tach_night.svg"
-        } else {
-            "cluster-visual/themes/clean-light/tach_day.svg"
-        }
-        else -> ""
-    }
-
-    private fun drawClassicSweepBand(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        innerR: Float,
-        outerR: Float,
-        sweepDeg: Float,
-        color: Int,
-        lightMode: Boolean = false,
-    ) {
-        val bandR = (outerR + innerR) / 2f
-        strokePaint.strokeWidth = (outerR - innerR) - 4f
-        strokePaint.strokeCap = Paint.Cap.BUTT
-        strokePaint.color = withAlpha(color, if (lightMode) 62 else 92)
-        arcRect.set(cx - bandR, cy - bandR, cx + bandR, cy + bandR)
-        canvas.drawArc(arcRect, 135f, sweepDeg, false, strokePaint)
-
-        val rad = Math.toRadians((135f + sweepDeg).toDouble())
-        strokePaint.strokeWidth = 3.5f
-        strokePaint.strokeCap = Paint.Cap.ROUND
-        strokePaint.color = if (lightMode) color else Color.argb(245, 255, 255, 255)
-        canvas.drawLine(
-            cx + (innerR + 2f) * cos(rad).toFloat(),
-            cy + (innerR + 2f) * sin(rad).toFloat(),
-            cx + (outerR - 2f) * cos(rad).toFloat(),
-            cy + (outerR - 2f) * sin(rad).toFloat(),
-            strokePaint,
+        themeDials.drawRightTachDial(
+            canvas = canvas,
+            style = style,
+            rawRpm = rawRpm,
+            curRpmFrac = curRpmFrac,
+            gearText = gearText,
+            accentColor = accentColor,
+            nightMode = nightMode,
+            centerArtwork = centerArtwork,
         )
-    }
-
-    private fun drawProgressArc(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        radius: Float,
-        strokeWidth: Float,
-        sweepDeg: Float,
-        color: Int,
-    ) {
-        arcRect.set(cx - radius, cy - radius, cx + radius, cy + radius)
-        strokePaint.strokeWidth = strokeWidth
-        strokePaint.strokeCap = Paint.Cap.ROUND
-        strokePaint.color = color
-        canvas.drawArc(arcRect, 135f, sweepDeg, false, strokePaint)
-    }
-
-    private fun drawRadialNumerals(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        labelRadius: Float,
-        labels: List<String>,
-        textSize: Float,
-        normalColor: Int,
-        bold: Boolean,
-        redFromIndex: Int = Int.MAX_VALUE,
-    ) {
-        if (labels.size < 2) return
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.typeface = Typeface.create(if (bold) "sans-serif-medium" else "sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
-        textPaint.textSize = textSize
-        val stepDeg = 270f / (labels.size - 1)
-        for (i in labels.indices) {
-            val rad = Math.toRadians((135f + i * stepDeg).toDouble())
-            textPaint.color = if (i >= redFromIndex) Color.rgb(232, 80, 56) else normalColor
-            canvas.drawText(
-                labels[i],
-                cx + labelRadius * cos(rad).toFloat(),
-                cy + labelRadius * sin(rad).toFloat() + textSize * 0.34f,
-                textPaint,
-            )
-        }
-    }
-
-    private fun drawCurvedEngraving(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        radius: Float,
-        text: String,
-        lightMode: Boolean = false,
-    ) {
-        curvedTextPath.reset()
-        innerArcRect.set(cx - radius, cy - radius, cx + radius, cy + radius)
-        curvedTextPath.addArc(innerArcRect, -58f, 64f)
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.textSize = 10.5f
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        textPaint.color = if (lightMode) Color.argb(155, 71, 85, 105) else Color.argb(150, 224, 232, 240)
-        canvas.drawTextOnPath(text, curvedTextPath, 0f, 0f, textPaint)
-    }
-
-    private fun drawFuelTelemetry(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        arcRadius: Float,
-        fuelFrac: Float,
-        rawFuel: Float?,
-        accentColor: Int,
-        lightMode: Boolean,
-    ) {
-        if (rawFuel != null && fuelFrac > 0.01f) {
-            arcRect.set(cx - arcRadius, cy - arcRadius, cx + arcRadius, cy + arcRadius)
-            strokePaint.strokeWidth = 5f
-            strokePaint.strokeCap = Paint.Cap.ROUND
-            val fuelColor = if (rawFuel <= 15f) Color.rgb(255, 82, 62) else accentColor
-            strokePaint.color = withAlpha(fuelColor, 232)
-            canvas.drawArc(arcRect, 124f, -68f * fuelFrac, false, strokePaint)
-        }
-
-        val label = if (rawFuel != null) "${rawFuel.roundToInt()}%" else "--%"
-        val textColor = if (lightMode) Color.rgb(52, 62, 74) else Color.argb(225, 235, 240, 248)
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        textPaint.textSize = 22f
-        textPaint.textAlign = Paint.Align.LEFT
-        val textW = textPaint.measureText(label)
-        val iconSize = 22
-        val gap = 6f
-        val startX = cx - (iconSize + gap + textW) / 2f
-        val iconTop = 405f
-
-        GeelyVectorSvgCache.getOrLoad(
-            context = context,
-            assetPath = "cluster-visual/themes/common/fuel_icon.svg",
-            widthPx = iconSize,
-            heightPx = iconSize,
-            tintColor = textColor,
-        )?.let { pic ->
-            val save = canvas.save()
-            canvas.translate(startX, iconTop)
-            canvas.drawPicture(pic)
-            canvas.restoreToCount(save)
-        }
-
-        textPaint.color = textColor
-        canvas.drawText(label, startX + iconSize + gap, iconTop + 18f, textPaint)
-    }
-
-    private fun drawCenteredRoundedCover(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        size: Float,
-        radius: Float,
-        bitmap: Bitmap,
-    ) {
-        val left = cx - size / 2f
-        val top = cy - size / 2f
-        coverRect.set(left, top, left + size, top + size)
-
-        fillPaint.color = Color.argb(72, 0, 0, 0)
-        canvas.drawRoundRect(left - 2f, top + 4f, left + size + 2f, top + size + 6f, radius, radius, fillPaint)
-
-        val save = canvas.save()
-        coverClipPath.reset()
-        coverClipPath.addRoundRect(coverRect, radius, radius, Path.Direction.CW)
-        canvas.clipPath(coverClipPath)
-        bitmapPaint.alpha = 255
-        canvas.drawBitmap(bitmap, null, coverRect, bitmapPaint)
-        canvas.restoreToCount(save)
+        return anim
     }
 
     private fun ellipsize(text: String, paint: Paint, maxWidth: Float): String {
@@ -752,12 +383,4 @@ internal class GeelyUltraThemeRenderer(private val context: Context) {
 
     private fun withAlpha(color: Int, alpha: Int): Int =
         (alpha.coerceIn(0, 255) shl 24) or (color and 0x00FFFFFF)
-
-    private fun blendWithWhite(color: Int, factor: Float): Int {
-        val f = factor.coerceIn(0f, 1f)
-        val r = (Color.red(color) + (255 - Color.red(color)) * f).roundToInt()
-        val g = (Color.green(color) + (255 - Color.green(color)) * f).roundToInt()
-        val b = (Color.blue(color) + (255 - Color.blue(color)) * f).roundToInt()
-        return Color.rgb(r, g, b)
-    }
 }

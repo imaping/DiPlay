@@ -52,22 +52,14 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
         GeelyClusterThemeStyle.AERO_MECHA -> 220f
         GeelyClusterThemeStyle.NORDIC_GLASS -> 180f
         GeelyClusterThemeStyle.RETRO_VFD -> 200f
-        else -> 180f
     }
 
     fun rpmMaxFor(style: GeelyClusterThemeStyle): Float = when (style) {
         GeelyClusterThemeStyle.SPORT_CHRONO -> 8000f
         GeelyClusterThemeStyle.AERO_MECHA -> 7500f
-        else -> 7000f
-    }
-
-    fun isExtraTheme(style: GeelyClusterThemeStyle): Boolean = when (style) {
-        GeelyClusterThemeStyle.SPORT_CHRONO,
         GeelyClusterThemeStyle.HERITAGE_GOLD,
-        GeelyClusterThemeStyle.AERO_MECHA,
         GeelyClusterThemeStyle.NORDIC_GLASS,
-        GeelyClusterThemeStyle.RETRO_VFD -> true
-        else -> false
+        GeelyClusterThemeStyle.RETRO_VFD -> 7000f
     }
 
     fun drawLeftSpeedDial(
@@ -93,7 +85,6 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
                 drawNordicGlassDynamic(canvas, false, lightMode, accentColor, rawSpeed, 0f, curSpeedFrac, rawFuel, curFuelFrac, "D", null)
             GeelyClusterThemeStyle.RETRO_VFD ->
                 drawRetroVfdDynamic(canvas, false, lightMode, accentColor, rawSpeed, 0f, curSpeedFrac, rawFuel, curFuelFrac, "D", null)
-            else -> Unit
         }
     }
 
@@ -120,7 +111,6 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
                 drawNordicGlassDynamic(canvas, true, lightMode, accentColor, 0f, rawRpm, curRpmFrac, null, 0f, gearText, centerArtwork)
             GeelyClusterThemeStyle.RETRO_VFD ->
                 drawRetroVfdDynamic(canvas, true, lightMode, accentColor, 0f, rawRpm, curRpmFrac, null, 0f, gearText, centerArtwork)
-            else -> Unit
         }
     }
 
@@ -169,7 +159,6 @@ internal class GeelyClusterExtraThemesRenderer(private val context: Context) {
             } else {
                 "cluster-visual/themes/retro-vfd/${kind}_dial.svg"
             }
-            else -> ""
         }
     }
 
