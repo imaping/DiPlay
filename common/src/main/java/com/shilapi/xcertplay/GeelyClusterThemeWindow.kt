@@ -84,8 +84,10 @@ internal class GeelyClusterThemeWindow(
  *
  * Kept separate from [DiPlaySessionService] so disconnecting CarPlay (which stops
  * [DiPlaySessionService]) does not terminate the cluster theme keep-alive process.
- * On [onTaskRemoved] or notification Stop action, cleanly removes the overlay and hands
- * the cluster back to the head unit so no frozen frame is left behind.
+ * On Geely / ECARX head units (e.g. `kx11_high`), `GeelyRecent` removes background activity tasks
+ * ~30 s after switching to another app without killing the process, so [onTaskRemoved] preserves
+ * the persistent cluster theme while [GeelySelfDrawConfig.launchThemeOnStart] is enabled.
+ * Explicit shutdown happens through the notification Stop action ([ACTION_STOP]) or Settings.
  */
 class GeelyClusterKeepAliveService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -98,6 +100,11 @@ class GeelyClusterKeepAliveService : Service() {
         }
 
         val cfg = GeelyClusterPrefs.load(applicationContext)
+        if (!cfg.launchThemeOnStart || !cfg.hasAnyClusterVisual) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         val openIntent = Intent(this, DiPlayActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
@@ -155,10 +162,24 @@ class GeelyClusterKeepAliveService : Service() {
         }.onFailure {
             runCatching { startForeground(NOTIFICATION_ID, notification) }
         }
+
+        // Re-attach the cluster theme window if the service was restarted via START_STICKY
+        // after a process kill or if the overlay was detached while running in the background.
+        if (!GeelyClusterEnhancer.isPersistentThemeActive()) {
+            GeelyClusterEnhancer.onKeepAliveServiceStarted(applicationContext)
+        }
         return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        val cfg = GeelyClusterPrefs.load(applicationContext)
+        if (cfg.launchThemeOnStart && cfg.hasAnyClusterVisual &&
+            GeelyVehicleDetector.isGeelyOrEcarx(applicationContext)
+        ) {
+            GeelyClusterEnhancer.onKeepAliveTaskRemoved(applicationContext)
+            super.onTaskRemoved(rootIntent)
+            return
+        }
         GeelyClusterEnhancer.onAppTaskRemoved(applicationContext)
         stopSelf()
         super.onTaskRemoved(rootIntent)

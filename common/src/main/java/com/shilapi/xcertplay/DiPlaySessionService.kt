@@ -55,10 +55,17 @@ class DiPlaySessionService : Service() {
         return START_NOT_STICKY
     }
     override fun onTaskRemoved(rootIntent: Intent?) {
+        // Geely / ECARX recents remove background tasks after ~30 s without killing the process;
+        // keep the active CarPlay session alive and rely on Disconnect / explicit stop instead.
+        if (GeelyVehicleDetector.isGeelyOrEcarx(applicationContext)) return
         // BYD's recents force-stops the package ~10 ms after removing the task: end guidance first.
         com.shilapi.xcertplay.hud.BydNavigationOutputs.endNow()
         CarPlayBackgroundSession.stop()
         stopSelf()
+    }
+    override fun onDestroy() {
+        GeelyClusterEnhancer.onSessionServiceDestroyed()
+        super.onDestroy()
     }
     companion object {
         const val ACTION_STOP = "com.shihab.diplay.DISCONNECT"

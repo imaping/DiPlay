@@ -257,6 +257,47 @@ internal object GeelyClusterEnhancer {
         refreshConfig(ctx)
     }
 
+    private var backgroundTurnListenerAttached: Boolean = false
+    private val backgroundTurnOverlayListener: (ClusterTurnGuidance?) -> Unit = { guidance ->
+        runOnMain {
+            val app = hostAppContext ?: return@runOnMain
+            if (!CarPlayBackgroundSession.hasSession()) {
+                detachBackgroundTurnListener()
+                clearBackgroundCarPlayOverlay()
+                return@runOnMain
+            }
+            onTurnGuidanceUpdated(app, guidance, isFullScreenPresentationActive)
+        }
+    }
+
+    private fun detachBackgroundTurnListener() {
+        if (!backgroundTurnListenerAttached) return
+        backgroundTurnListenerAttached = false
+        BydNavigationOutputs.setTurnOverlayListener(null)
+    }
+
+    private fun clearBackgroundCarPlayOverlay() {
+        if (CarPlayGlance.laneListener === laneListenerHook) {
+            CarPlayGlance.laneListener = previousLaneListener
+            previousLaneListener = null
+        }
+        latestGuidance = null
+        latestLanes = emptyList()
+        currentFakeUltraView?.clearCarPlayData()
+        closeStandaloneOverlayWindow()
+        val keepThemeAlive = isPersistentThemeActive() &&
+            (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
+        if (!keepThemeAlive) {
+            hostNightObserverRemoval?.invoke()
+            hostNightObserverRemoval = null
+            vehicleDayNightRemoval?.invoke()
+            vehicleDayNightRemoval = null
+            hostAppContext?.let { app ->
+                runCatching { GeelyClusterPrefs.prefs(app).unregisterOnSharedPreferenceChangeListener(prefsListener) }
+            }
+        }
+    }
+
     /**
      * Called once DiPlay launches (`DiPlayActivity.onCreate`) so the persistent cluster theme
      * window can appear immediately even before an iPhone connects to CarPlay.
@@ -269,6 +310,40 @@ internal object GeelyClusterEnhancer {
         ensureVehicleDayNightObserver(app)
         runOnMain {
             syncPersistentThemeWindow(app, requestFullScreen = true)
+        }
+    }
+
+    /**
+     * Called from [GeelyClusterKeepAliveService.onStartCommand] when the foreground keep-alive
+     * service restarts (e.g. via `START_STICKY`) while the persistent cluster theme is not attached.
+     */
+    fun onKeepAliveServiceStarted(context: Context) {
+        onAppLaunched(context)
+    }
+
+    /**
+     * Called from [GeelyClusterKeepAliveService.onTaskRemoved] on Geely / ECARX head units where
+     * `GeelyRecent` removes background activity tasks after ~30 s while the process remains alive.
+     * Keeps the persistent cluster overlay attached instead of handing the cluster back to OEM.
+     */
+    fun onKeepAliveTaskRemoved(context: Context) {
+        val app = context.applicationContext
+        hostAppContext = app
+        hostLogger("GeelyClusterTheme: background task removed by head unit; keeping cluster theme alive")
+        runOnMain {
+            if (!isPersistentThemeActive()) {
+                syncPersistentThemeWindow(app, requestFullScreen = false)
+            }
+        }
+    }
+
+    /** Called when [DiPlaySessionService] stops (CarPlay disconnected or stopped from notification). */
+    fun onSessionServiceDestroyed() {
+        runOnMain {
+            if (backgroundTurnListenerAttached && !CarPlayBackgroundSession.hasSession()) {
+                detachBackgroundTurnListener()
+                clearBackgroundCarPlayOverlay()
+            }
         }
     }
 
@@ -288,6 +363,7 @@ internal object GeelyClusterEnhancer {
     fun onAppTaskRemoved(context: Context) {
         val app = context.applicationContext
         runOnMain {
+            detachBackgroundTurnListener()
             vehicleDayNightRemoval?.invoke()
             vehicleDayNightRemoval = null
             carPlayNightSink = null
@@ -306,6 +382,7 @@ internal object GeelyClusterEnhancer {
         hostAppContext = app
         hostLogger = log
         carPlayNightSink = onVehicleNightChanged
+        backgroundTurnListenerAttached = false
         GeelyEcarxSensorReader.setLogger { msg -> hostLogger(msg) }
         if (CarPlayGlance.laneListener !== laneListenerHook) {
             previousLaneListener = CarPlayGlance.laneListener
@@ -321,26 +398,22 @@ internal object GeelyClusterEnhancer {
     /** Called in `CarPlayHostActivity.onDestroy`. */
     fun detachHost() {
         carPlayNightSink = null
-        if (CarPlayGlance.laneListener === laneListenerHook) {
-            CarPlayGlance.laneListener = previousLaneListener
-            previousLaneListener = null
-        }
-        latestGuidance = null
-        latestLanes = emptyList()
-        currentFakeUltraView?.clearCarPlayData()
-        closeStandaloneOverlayWindow()
-
-        val keepThemeAlive = isPersistentThemeActive() &&
-            (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
-        if (!keepThemeAlive) {
-            hostNightObserverRemoval?.invoke()
-            hostNightObserverRemoval = null
-            vehicleDayNightRemoval?.invoke()
-            vehicleDayNightRemoval = null
-            hostAppContext?.let { app ->
-                runCatching { GeelyClusterPrefs.prefs(app).unregisterOnSharedPreferenceChangeListener(prefsListener) }
+        val backgroundSessionAlive = CarPlayBackgroundSession.hasSession() &&
+            GeelyVehicleDetector.isGeelyOrEcarx(hostAppContext)
+        if (backgroundSessionAlive) {
+            // GeelyRecent may destroy CarPlayHostActivity in the background after ~30 s while the
+            // CarPlay session remains active. Keep the standalone W-HUD / classic-card overlay and
+            // lane/turn listeners alive so cluster HUD guidance continues seamlessly.
+            overlayWindow?.view?.apply {
+                fullScreen = false
+                invalidate()
             }
+            backgroundTurnListenerAttached = true
+            BydNavigationOutputs.setTurnOverlayListener(backgroundTurnOverlayListener)
+            return
         }
+        detachBackgroundTurnListener()
+        clearBackgroundCarPlayOverlay()
     }
 
     /**
@@ -570,8 +643,12 @@ internal object GeelyClusterEnhancer {
         activeDimWatcher?.close()
         activeDimWatcher = null
 
-        latestGuidance = null
-        latestLanes = emptyList()
+        val keepBackgroundGuidance = CarPlayBackgroundSession.hasSession() &&
+            GeelyVehicleDetector.isGeelyOrEcarx(hostAppContext)
+        if (!keepBackgroundGuidance) {
+            latestGuidance = null
+            latestLanes = emptyList()
+        }
         currentFakeUltraView?.clearCarPlayData()
 
         val keepThemeAlive = isPersistentThemeActive() &&
@@ -585,8 +662,10 @@ internal object GeelyClusterEnhancer {
         activePresentationInnerRoot = null
         overlayWindow?.view?.apply {
             fullScreen = false
-            guidance = null
-            lanes = emptyList()
+            if (!keepBackgroundGuidance) {
+                guidance = null
+                lanes = emptyList()
+            }
             invalidate()
         }
         hostAppContext?.let(::syncClusterWheelKeyActive)

@@ -74,9 +74,11 @@
             </intent-filter>
         </activity>
         <service android:name="com.shilapi.xcertplay.DiPlaySessionService"
-            android:exported="false" android:foregroundServiceType="connectedDevice|microphone|location" />
+            android:exported="false" android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice|microphone|location" />
         <service android:name="com.shilapi.xcertplay.GeelyClusterKeepAliveService"
-            android:exported="false" android:foregroundServiceType="connectedDevice" />
+            android:exported="false" android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <activity
             android:name="com.shilapi.xcertplay.CarPlayHostActivity"
