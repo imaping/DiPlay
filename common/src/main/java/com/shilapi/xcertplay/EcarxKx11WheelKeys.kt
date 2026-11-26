@@ -90,15 +90,9 @@ internal object EcarxKx11WheelKeys {
         val done: (Int) -> Unit,
     )
 
-    private class AmapOverviewLearningSession(
-        val cancelled: () -> Unit,
-        val done: (Int) -> Unit,
-    )
-
     private val handler = Handler(Looper.getMainLooper())
     private val siriDebounce = WheelSiriKey()
     private val clusterDoublePress = WheelSiriKey()
-    private val amapOverviewDoublePress = WheelSiriKey()
 
     @Volatile
     private var appContext: Context? = null
@@ -114,8 +108,6 @@ internal object EcarxKx11WheelKeys {
     private var learning: LearningSession? = null
     @Volatile
     private var clusterLearning: ClusterLearningSession? = null
-    @Volatile
-    private var amapOverviewLearning: AmapOverviewLearningSession? = null
     private var ignoreRuntimeKeyCode: Int? = null
     private var ignoreRuntimeUntilElapsedMs = 0L
     private var doubleSiriFirstPressWasInCall = false
@@ -149,7 +141,7 @@ internal object EcarxKx11WheelKeys {
     /** Stops runtime listening when the CarPlay session ends. */
     @Synchronized
     fun stop() {
-        if (!sessionActive && !clusterActive && !bound && learning == null && clusterLearning == null && amapOverviewLearning == null) return
+        if (!sessionActive && !clusterActive && !bound && learning == null && clusterLearning == null) return
         sessionActive = false
         clearDoubleSiriLocked()
         syncBindingLocked()
@@ -195,14 +187,11 @@ internal object EcarxKx11WheelKeys {
         }
         val previous: LearningSession?
         val previousCluster: ClusterLearningSession?
-        val previousAmap: AmapOverviewLearningSession?
         synchronized(this) {
             appContext = context.applicationContext
             previous = learning
             previousCluster = clusterLearning
-            previousAmap = amapOverviewLearning
             clusterLearning = null
-            amapOverviewLearning = null
             learning = LearningSession(role, cancelled, refused, done)
             handler.removeCallbacks(endLearning)
             handler.postDelayed(endLearning, WheelKeyService.LEARNING_TIMEOUT_MILLIS)
@@ -210,7 +199,6 @@ internal object EcarxKx11WheelKeys {
         }
         previous?.cancelled?.invoke()
         previousCluster?.cancelled?.invoke()
-        previousAmap?.cancelled?.invoke()
         return true
     }
 
@@ -226,14 +214,11 @@ internal object EcarxKx11WheelKeys {
         if (!EcarxKx11HeadUnit.detected) return false
         val previous: LearningSession?
         val previousCluster: ClusterLearningSession?
-        val previousAmap: AmapOverviewLearningSession?
         synchronized(this) {
             appContext = context.applicationContext
             previous = learning
             previousCluster = clusterLearning
-            previousAmap = amapOverviewLearning
             learning = null
-            amapOverviewLearning = null
             clusterLearning = ClusterLearningSession(cancelled, done)
             handler.removeCallbacks(endLearning)
             handler.postDelayed(endLearning, WheelKeyService.LEARNING_TIMEOUT_MILLIS)
@@ -241,58 +226,23 @@ internal object EcarxKx11WheelKeys {
         }
         previous?.cancelled?.invoke()
         previousCluster?.cancelled?.invoke()
-        previousAmap?.cancelled?.invoke()
-        return true
-    }
-
-    /**
-     * Enters key-learning mode on `com.geely.inputservice` to bind a steering-wheel button for
-     * switching center AMap to overview (enabling cluster lane-level guidance). Returns `false` off KX11.
-     */
-    fun learnAmapOverviewKey(
-        context: Context,
-        cancelled: () -> Unit = {},
-        done: (Int) -> Unit,
-    ): Boolean {
-        if (!EcarxKx11HeadUnit.detected) return false
-        val previous: LearningSession?
-        val previousCluster: ClusterLearningSession?
-        val previousAmap: AmapOverviewLearningSession?
-        synchronized(this) {
-            appContext = context.applicationContext
-            previous = learning
-            previousCluster = clusterLearning
-            previousAmap = amapOverviewLearning
-            learning = null
-            clusterLearning = null
-            amapOverviewLearning = AmapOverviewLearningSession(cancelled, done)
-            handler.removeCallbacks(endLearning)
-            handler.postDelayed(endLearning, WheelKeyService.LEARNING_TIMEOUT_MILLIS)
-            syncBindingLocked()
-        }
-        previous?.cancelled?.invoke()
-        previousCluster?.cancelled?.invoke()
-        previousAmap?.cancelled?.invoke()
         return true
     }
 
     /** Cancels any active KX11 key-learning session and restores runtime binding state. */
     fun cancelLearning() {
-        val cancelledTriple = synchronized(this) {
+        val cancelledPair = synchronized(this) {
             val prevRole = learning
             val prevCluster = clusterLearning
-            val prevAmap = amapOverviewLearning
-            if (prevRole == null && prevCluster == null && prevAmap == null) return
+            if (prevRole == null && prevCluster == null) return
             learning = null
             clusterLearning = null
-            amapOverviewLearning = null
             handler.removeCallbacks(endLearning)
             syncBindingLocked()
-            Triple(prevRole, prevCluster, prevAmap)
+            prevRole to prevCluster
         }
-        cancelledTriple.first?.cancelled?.invoke()
-        cancelledTriple.second?.cancelled?.invoke()
-        cancelledTriple.third?.cancelled?.invoke()
+        cancelledPair.first?.cancelled?.invoke()
+        cancelledPair.second?.cancelled?.invoke()
     }
 
     private fun runtimeCodes(context: Context): IntArray {
@@ -308,8 +258,6 @@ internal object EcarxKx11WheelKeys {
                     ?.takeIf(::isGeelyInputKey)
                     ?.let { codes.add(it.code) }
             }
-            val amapCode = GeelyAmapOverviewPrefs.load(context).wheelKeyCode
-            if (amapCode > 0) codes.add(amapCode)
         }
         if (sessionActive || clusterActive) {
             val clusterCode = GeelyClusterPrefs.load(context).centerSwitchKeyCode
@@ -319,7 +267,7 @@ internal object EcarxKx11WheelKeys {
     }
 
     private fun desiredCodesLocked(context: Context): IntArray = when {
-        learning != null || clusterLearning != null || amapOverviewLearning != null -> LEARNABLE_CODES
+        learning != null || clusterLearning != null -> LEARNABLE_CODES
         sessionActive || clusterActive -> runtimeCodes(context)
         else -> IntArray(0)
     }
@@ -377,7 +325,7 @@ internal object EcarxKx11WheelKeys {
         }.onSuccess {
             listener = nextListener
             registeredCodes = codes.copyOf()
-            val mode = if (learning != null || clusterLearning != null || amapOverviewLearning != null) "learn" else "runtime"
+            val mode = if (learning != null || clusterLearning != null) "learn" else "runtime"
             note("KX11 input service registered ($mode) codes=${codes.joinToString()}")
         }.onFailure { error ->
             listener = null
@@ -389,13 +337,13 @@ internal object EcarxKx11WheelKeys {
     private fun createListener(): IInputListener = object : IInputListener.Stub() {
         override fun onKeyCodeEvent(keyCode: Int, event: Int, softKeyFunction: Int) {
             // Action 0 = key down on com.geely.inputservice; capture immediately during learning.
-            if (event == 0 && (learning != null || clusterLearning != null || amapOverviewLearning != null)) {
+            if (event == 0 && (learning != null || clusterLearning != null)) {
                 handleLearnKey(keyCode)
             }
         }
 
         override fun onShortClick(keyCode: Int, softKeyFunction: Int) {
-            if (learning != null || clusterLearning != null || amapOverviewLearning != null) {
+            if (learning != null || clusterLearning != null) {
                 handleLearnKey(keyCode)
                 return
             }
@@ -407,7 +355,7 @@ internal object EcarxKx11WheelKeys {
         override fun onHoldingPressStopped(keyCode: Int, softKeyFunction: Int) = Unit
 
         override fun onLongPressTriggered(keyCode: Int, softKeyFunction: Int) {
-            if (learning != null || clusterLearning != null || amapOverviewLearning != null) {
+            if (learning != null || clusterLearning != null) {
                 handleLearnKey(keyCode)
                 return
             }
@@ -420,31 +368,20 @@ internal object EcarxKx11WheelKeys {
     private fun handleLearnKey(keyCode: Int) {
         val capturedRole: LearningSession?
         val capturedCluster: ClusterLearningSession?
-        val capturedAmap: AmapOverviewLearningSession?
         val context: Context
         synchronized(this) {
             capturedRole = learning
             capturedCluster = clusterLearning
-            capturedAmap = amapOverviewLearning
-            if (capturedRole == null && capturedCluster == null && capturedAmap == null) return
+            if (capturedRole == null && capturedCluster == null) return
             context = appContext ?: return
             learning = null
             clusterLearning = null
-            amapOverviewLearning = null
             handler.removeCallbacks(endLearning)
             // Suppress the release/click of the press that just completed key learning.
             ignoreRuntimeKeyCode = keyCode
             ignoreRuntimeUntilElapsedMs = SystemClock.elapsedRealtime() + LEARN_COOLDOWN_MILLIS
         }
         handler.post {
-            if (capturedAmap != null) {
-                val updated = GeelyAmapOverviewPrefs.load(context).copy(wheelKeyCode = keyCode)
-                GeelyAmapOverviewPrefs.save(context, updated)
-                note("KX11 AMap overview key is now $keyCode")
-                capturedAmap.done.invoke(keyCode)
-                synchronized(this) { syncBindingLocked() }
-                return@post
-            }
             if (capturedCluster != null) {
                 val updated = GeelyClusterPrefs.load(context).copy(centerSwitchKeyCode = keyCode)
                 GeelyClusterPrefs.save(context, updated)
@@ -524,39 +461,6 @@ internal object EcarxKx11WheelKeys {
         }
 
         if (!sessionActive) return
-        val amapCfg = GeelyAmapOverviewPrefs.load(context)
-        if (amapCfg.wheelKeyCode != 0 && keyCode == amapCfg.wheelKeyCode) {
-            when (amapCfg.wheelKeyTrigger) {
-                GeelyAmapKeyTrigger.DOUBLE_CLICK -> {
-                    if (!longPress) {
-                        val now = SystemClock.elapsedRealtime()
-                        val action = synchronized(this) {
-                            amapOverviewDoublePress.onDoublePress(now, CLUSTER_DOUBLE_CLICK_INTERVAL_MS)
-                        }
-                        if (action == WheelSiriKey.DoublePressAction.CONFIRMED) {
-                            val sent = GeelyAmapOverviewController.onWheelKeyTriggered(context)
-                            note("KX11 AMap overview key $keyCode (double) sent=$sent")
-                            return
-                        }
-                    }
-                }
-                GeelyAmapKeyTrigger.SHORT_CLICK -> {
-                    if (!longPress) {
-                        val sent = GeelyAmapOverviewController.onWheelKeyTriggered(context)
-                        note("KX11 AMap overview key $keyCode (short) sent=$sent")
-                        return
-                    }
-                }
-                GeelyAmapKeyTrigger.LONG_PRESS -> {
-                    if (longPress) {
-                        val sent = GeelyAmapOverviewController.onWheelKeyTriggered(context)
-                        note("KX11 AMap overview key $keyCode (long) sent=$sent")
-                        return
-                    }
-                }
-            }
-        }
-
         val wheelKey = toWheelKey(keyCode)
         val calling = inCall(context)
 
@@ -620,7 +524,6 @@ internal object EcarxKx11WheelKeys {
         doubleSiriFirstPressWasInCall = false
         siriDebounce.reset()
         clusterDoublePress.reset()
-        amapOverviewDoublePress.reset()
     }
 
     private fun cancelDelayedSiriLocked() {

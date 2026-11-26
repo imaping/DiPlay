@@ -933,15 +933,11 @@ open class CarPlayHostActivity : ComponentActivity() {
         locationPermissionAvailable = hasFineLocationPermission()
         setContentView(buildContentView())
         GeelyAmapOverviewController.attachHost(
-            activity = this,
-            rootProvider = { videoView?.parent as? FrameLayout },
-            textureProvider = { videoView as? TextureView },
-            contentRectProvider = { videoView?.takeIf { it.width > 0 && it.height > 0 }?.let { contentRect(it.width, it.height) } },
+            context = this,
             touchSender = { contacts -> controller?.sendTouch(contacts) == true },
             menuOpenProvider = { menuOpen },
             mainStreamActiveProvider = { SCREEN_TYPE_MAIN in activeScreenStreamTypes },
             clusterActiveProvider = { SCREEN_TYPE_ALT in activeScreenStreamTypes || clusterPresentation != null || clusterLayers.isNotEmpty() },
-            darkModeProvider = { darkMode },
             log = ::appendLog,
         )
         applyFullscreenMode()
@@ -6774,7 +6770,6 @@ open class CarPlayHostActivity : ComponentActivity() {
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 if (gestureFingerCount > 0 && event.pointerCount == gestureFingerCount && !gestureSequenceActive) {
-                    GeelyAmapOverviewController.cancelTwoFingerGesture()
                     gestureSequenceActive = true
                     gestureTracking = true
                     gestureStartX = pointerCentroid(event, horizontal = true)
@@ -6834,7 +6829,6 @@ open class CarPlayHostActivity : ComponentActivity() {
             }
             return true
         }
-        if (GeelyAmapOverviewController.onHostTouch(view, event, content, ::releaseCarPlayTouches)) return true
         if (gestureFingerCount > 0 && holdTouch(event, content)) return true
         flushHeldTouch()
         val contacts = CarPlayTouchMapper.contacts(event, content)

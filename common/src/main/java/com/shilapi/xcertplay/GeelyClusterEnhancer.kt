@@ -1153,7 +1153,6 @@ private class GeelyClusterSettingsPanel(
     private var statusTextView: TextView? = null
     private var tabContentContainer: LinearLayout? = null
     private var scrollToTopCallback: (() -> Unit)? = null
-    var onDismissDialog: (() -> Unit)? = null
     private val tabButtons = ArrayList<Button>()
 
     fun buildInlineCard(): LinearLayout {
@@ -1316,7 +1315,6 @@ private class GeelyClusterSettingsPanel(
             2 -> buildHudTab(container)
             3 -> buildPreviewTab(container)
             4 -> buildDisplayAndPermissionTab(container)
-            5 -> buildAmapOverviewTab(container)
         }
     }
 
@@ -1622,6 +1620,39 @@ private class GeelyClusterSettingsPanel(
             onConfigUpdated()
             rebuildTabContent()
         }
+
+        addSectionTitle(container, "高德主驾车道级")
+        val amapCfg = GeelyAmapOverviewPrefs.load(activity)
+        addSwitchRow(
+            container = container,
+            title = "导航开始自动切中控全览",
+            subtitle = "高德开始导航后自动点击中控右上角「全览」(90%, 10%)，使主驾仪表默认显示车道级导航。",
+            checked = amapCfg.autoOverviewOnNavStart,
+        ) { checked ->
+            GeelyAmapOverviewPrefs.save(activity, amapCfg.copy(autoOverviewOnNavStart = checked))
+            rebuildTabContent()
+        }
+        if (amapCfg.autoOverviewOnNavStart) {
+            val delayRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(4), 0, dp(6))
+            }
+            for ((idx, delayMs) in GeelyAmapOverviewConfig.DELAY_PRESETS_MS.withIndex()) {
+                val active = amapCfg.autoOverviewDelayMs == delayMs
+                val label = String.format(java.util.Locale.US, "延迟 %.1f 秒", delayMs / 1000f)
+                val btn = createActionButton(label, selected = active) {
+                    GeelyAmapOverviewPrefs.save(activity, amapCfg.copy(autoOverviewDelayMs = delayMs))
+                    rebuildTabContent()
+                }
+                delayRow.addView(
+                    btn,
+                    LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+                        if (idx > 0) leftMargin = dp(6)
+                    },
+                )
+            }
+            container.addView(delayRow)
+        }
     }
 
     private fun buildHudTab(container: LinearLayout) {
@@ -1809,182 +1840,6 @@ private class GeelyClusterSettingsPanel(
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setPadding(0, dp(10), 0, 0)
             }
-        )
-    }
-
-    private fun buildAmapOverviewTab(container: LinearLayout) {
-        var amapCfg = GeelyAmapOverviewPrefs.load(activity)
-        fun saveAmap(updated: GeelyAmapOverviewConfig) {
-            amapCfg = updated
-            GeelyAmapOverviewPrefs.save(activity, updated)
-            EcarxKx11WheelKeys.settingsChanged()
-        }
-
-        addSectionTitle(container, "高德主驾车道级（中控全览联动）")
-        val posLabel = "${(amapCfg.buttonX * 100f).roundToInt()}%, ${(amapCfg.buttonY * 100f).roundToInt()}%"
-        val calStatus = if (amapCfg.calibrated) "已校准 ($posLabel)" else "默认坐标 ($posLabel，建议实车校准)"
-        val sampleStatus = "日间:${if (amapCfg.hasDaySamples) "已采样" else "未采样"} · 夜间:${if (amapCfg.hasNightSamples) "已采样" else "未采样"}"
-        container.addView(
-            TextView(activity).apply {
-                text = "当前全览按钮：$calStatus\n视觉校验特征：$sampleStatus"
-                setTextColor(colors.primaryText)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                background = roundedBox(colors.itemSurface, colors.outline, cornerDp = 12)
-                setPadding(dp(14), dp(10), dp(14), dp(10))
-            },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(4)
-                bottomMargin = dp(8)
-            },
-        )
-
-        addSwitchRow(
-            container = container,
-            title = "导航开始自动切中控全览",
-            subtitle = "高德开始导航后自动点击中控右上角「全览」，使主驾仪表默认显示车道级导航。",
-            checked = amapCfg.autoOverviewOnNavStart,
-        ) { checked ->
-            saveAmap(amapCfg.copy(autoOverviewOnNavStart = checked))
-            rebuildTabContent()
-        }
-
-        if (amapCfg.autoOverviewOnNavStart) {
-            container.addView(
-                TextView(activity).apply {
-                    text = "自动切换延迟（等待高德导航界面加载完成）"
-                    setTextColor(colors.secondaryText)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setPadding(dp(2), dp(6), dp(2), dp(4))
-                },
-            )
-            val delayRow = LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 0, 0, dp(6))
-            }
-            for ((idx, delayMs) in GeelyAmapOverviewConfig.DELAY_PRESETS_MS.withIndex()) {
-                val active = amapCfg.autoOverviewDelayMs == delayMs
-                val label = String.format(java.util.Locale.US, "%.1f 秒", delayMs / 1000f)
-                val btn = createActionButton(label, selected = active) {
-                    saveAmap(amapCfg.copy(autoOverviewDelayMs = delayMs))
-                    rebuildTabContent()
-                }
-                delayRow.addView(
-                    btn,
-                    LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                        if (idx > 0) leftMargin = dp(6)
-                    },
-                )
-            }
-            container.addView(delayRow)
-        }
-
-        addSectionTitle(container, "中控屏双指手势切换")
-        addSwitchRow(
-            container = container,
-            title = "两指左右滑切换主驾车道级",
-            subtitle = "两指左滑 = 打开主驾车道级（中控切全览）；两指右滑 = 关闭主驾车道级（中控切回车道级）。仅识别平行横滑，不干扰双指缩放与三指下滑设置。",
-            checked = amapCfg.gestureEnabled,
-        ) { checked ->
-            saveAmap(amapCfg.copy(gestureEnabled = checked))
-        }
-
-        addSectionTitle(container, "方向盘按键切回主驾车道级")
-        val keyRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(2), 0, dp(6))
-        }
-        fun amapKeyLabel(): String = if (amapCfg.wheelKeyCode > 0) {
-            "绑定按键 · ${amapCfg.wheelKeyCode}（${amapCfg.wheelKeyTrigger.shortLabel}）"
-        } else {
-            "绑定方向盘按键 · 未设置"
-        }
-        lateinit var bindAmapKeyBtn: Button
-        bindAmapKeyBtn = createActionButton(amapKeyLabel(), selected = amapCfg.wheelKeyCode > 0) {
-            bindAmapKeyBtn.text = "现在请按下方向盘按键…"
-            val started = EcarxKx11WheelKeys.learnAmapOverviewKey(
-                context = activity,
-                cancelled = {
-                    activity.runOnUiThread { bindAmapKeyBtn.text = amapKeyLabel() }
-                },
-                done = { learnedCode ->
-                    activity.runOnUiThread {
-                        saveAmap(amapCfg.copy(wheelKeyCode = learnedCode))
-                        Toast.makeText(
-                            activity,
-                            "已绑定主驾车道级按键：$learnedCode（${amapCfg.wheelKeyTrigger.displayName}触发）",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                        rebuildTabContent()
-                    }
-                },
-            )
-            if (!started) {
-                bindAmapKeyBtn.text = amapKeyLabel()
-                Toast.makeText(activity, "当前车机不支持吉利方向盘输入服务", Toast.LENGTH_SHORT).show()
-            }
-        }
-        val amapTriggerBtn = createActionButton("触发：${amapCfg.wheelKeyTrigger.shortLabel}") {
-            saveAmap(amapCfg.copy(wheelKeyTrigger = amapCfg.wheelKeyTrigger.next()))
-            rebuildTabContent()
-        }
-        keyRow.addView(bindAmapKeyBtn, LinearLayout.LayoutParams(0, dp(46), 1.9f).apply { marginEnd = dp(6) })
-        keyRow.addView(amapTriggerBtn, LinearLayout.LayoutParams(0, dp(46), 0.9f))
-        if (amapCfg.wheelKeyCode > 0) {
-            val clearBtn = createActionButton("清除") {
-                EcarxKx11WheelKeys.cancelLearning()
-                saveAmap(amapCfg.copy(wheelKeyCode = 0))
-                rebuildTabContent()
-            }
-            keyRow.addView(clearBtn, LinearLayout.LayoutParams(0, dp(46), 0.65f).apply { leftMargin = dp(6) })
-        }
-        container.addView(keyRow)
-        container.addView(
-            TextView(activity).apply {
-                text = "支持双击 / 单击 / 长按触发。可与仪表中心切换共用同一按键（如长按切仪表模式、双击切主驾车道级），互不冲突。"
-                setTextColor(colors.secondaryText)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                setPadding(dp(2), 0, dp(2), dp(6))
-            },
-        )
-
-        addSectionTitle(container, "按钮校准与防误触校验")
-        addSwitchRow(
-            container = container,
-            title = "启用按钮画面特征校验",
-            subtitle = "自动识别高德右上角「全览」按钮是否已隐藏或处于选中态；隐藏时先自动唤出工具栏再点击，防止误触其他页面或反向切换。",
-            checked = amapCfg.visualCheckEnabled,
-        ) { checked ->
-            saveAmap(amapCfg.copy(visualCheckEnabled = checked))
-        }
-
-        val actionRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(6), 0, dp(4))
-        }
-        val calibrateBtn = createActionButton("实屏校准「全览」按钮", selected = true) {
-            onDismissDialog?.invoke()
-            GeelyAmapOverviewController.requestCalibration(activity)
-        }
-        val testBtn = createActionButton("立即测试切全览") {
-            onDismissDialog?.invoke()
-            GeelyAmapOverviewController.triggerTestOverview(activity)
-        }
-        val resetBtn = createActionButton("重置校准") {
-            GeelyAmapOverviewPrefs.resetCalibration(activity)
-            Toast.makeText(activity, "已恢复全览按钮默认坐标并清除视觉样本", Toast.LENGTH_SHORT).show()
-            rebuildTabContent()
-        }
-        actionRow.addView(calibrateBtn, LinearLayout.LayoutParams(0, dp(46), 1.5f).apply { marginEnd = dp(6) })
-        actionRow.addView(testBtn, LinearLayout.LayoutParams(0, dp(46), 1.1f).apply { marginEnd = dp(6) })
-        actionRow.addView(resetBtn, LinearLayout.LayoutParams(0, dp(46), 0.8f))
-        container.addView(actionRow)
-        container.addView(
-            TextView(activity).apply {
-                text = "提示：高德日间/夜间配色不同，建议白天和夜晚分别校准一次，以便工具栏自动隐藏时精准识别并自动唤出。"
-                setTextColor(colors.secondaryText)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                setPadding(dp(2), dp(4), dp(2), dp(4))
-            },
         )
     }
 
@@ -2203,7 +2058,6 @@ private class GeelyClusterSettingsPanel(
             "抬头显示 (HUD)",
             "效果预览",
             "权限与兼容",
-            "高德车道级",
         )
     }
 }
@@ -2333,7 +2187,6 @@ internal class GeelyClusterSettingsDialog(
 
         root.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        panel.onDismissDialog = { dialog.dismiss() }
         panel.bindDialogViews(statusTv, tabButtons, contentCol) {
             rightScroll.scrollTo(0, 0)
         }
