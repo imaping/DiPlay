@@ -14,7 +14,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.PI
-import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -210,9 +209,9 @@ internal class GeelyUltraThemeRenderer(context: Context) {
     }
 
     /**
-     * Centered floating music visualizer & song/lyrics pill positioned in the open bottom center
-     * region (`Y: 656..704`) between the factory QNX bottom-left and bottom-right status wings,
-     * with frosted capsule backing for high contrast over both maps and standby backdrops.
+     * Centered bare music visualizer & song/lyrics line positioned in the bottom center strip
+     * (`baselineY = 688f`) between the factory QNX bottom-left and bottom-right status wings,
+     * with no capsule backdrop or border so it blends directly into the factory bottom bar.
      */
     fun drawUltraBottomMusicBar(
         canvas: Canvas,
@@ -226,35 +225,21 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         fallbackFuel: String,
     ): Boolean {
         val useLightPalette = style.supportsLightMode && !nightMode
-        val pillBgColor = if (useLightPalette) Color.argb(218, 245, 248, 252) else Color.argb(196, 10, 14, 22)
-        val pillStrokeColor = if (useLightPalette) Color.argb(92, 71, 85, 105) else withAlpha(accentColor, 115)
-        val pillTop = 656f
-        val pillBottom = 704f
-        val pillRadius = 24f
 
         val title = songTitle?.trim().orEmpty()
         if (title.isEmpty()) {
             val parts = listOf(fallbackTime, fallbackFuel).filter { it.isNotBlank() }
             if (parts.isEmpty()) return false
-            val text = parts.joinToString("   ·   ")
             textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             textPaint.textSize = 21f
             textPaint.textAlign = Paint.Align.CENTER
-            val textW = textPaint.measureText(text)
-            val halfW = max(92f, textW / 2f + 24f).coerceAtMost(246f)
-            arcRect.set(960f - halfW, pillTop + 3f, 960f + halfW, pillBottom - 3f)
-            fillPaint.color = pillBgColor
-            canvas.drawRoundRect(arcRect, 21f, 21f, fillPaint)
-            strokePaint.strokeWidth = 1.2f
-            strokePaint.color = pillStrokeColor
-            canvas.drawRoundRect(arcRect, 21f, 21f, strokePaint)
-
             textPaint.color = if (useLightPalette) Color.rgb(36, 44, 54) else Color.argb(232, 232, 238, 246)
-            canvas.drawText(text, 960f, pillTop + 31f, textPaint)
+            val text = ellipsize(parts.joinToString("   ·   "), textPaint, 420f)
+            canvas.drawText(text, 960f, 687f, textPaint)
             return false
         }
 
-        val textColor = if (useLightPalette) Color.rgb(28, 36, 46) else Color.argb(246, 246, 249, 253)
+        val textColor = if (useLightPalette) Color.rgb(24, 32, 42) else Color.argb(246, 246, 249, 253)
         val eqColor = if (useLightPalette) accentColor else withAlpha(accentColor, 240)
 
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
@@ -265,18 +250,9 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         val eqW = 24f
         val gap = 10f
         val totalW = eqW + gap + textW
-        val pillHalfW = max(112f, totalW / 2f + 26f).coerceAtMost(246f)
-
-        // Floating frosted rounded pill backdrop
-        arcRect.set(960f - pillHalfW, pillTop, 960f + pillHalfW, pillBottom)
-        fillPaint.color = pillBgColor
-        canvas.drawRoundRect(arcRect, pillRadius, pillRadius, fillPaint)
-        strokePaint.strokeWidth = 1.4f
-        strokePaint.color = pillStrokeColor
-        canvas.drawRoundRect(arcRect, pillRadius, pillRadius, strokePaint)
 
         val startX = 960f - totalW / 2f
-        val baselineY = pillTop + 32f
+        val baselineY = 688f
 
         val phase = (nowMs % 1200L) / 1200f * (2f * PI.toFloat())
         val h1 = if (isPlaying) 6f + 6f * (0.5f + 0.5f * sin(phase)) else 6f
