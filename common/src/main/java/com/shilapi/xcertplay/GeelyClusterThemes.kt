@@ -7,7 +7,6 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RadialGradient
-import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import java.text.SimpleDateFormat
@@ -32,7 +31,6 @@ internal class GeelyUltraThemeRenderer(context: Context) {
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    private val arcRect = RectF()
     private val clockTimeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val clockDateZhFormatter = SimpleDateFormat("M月d日  ·  EEEE", Locale.CHINA)
     private val clockDateIntlFormatter = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
@@ -56,14 +54,9 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         val useLightPalette = style.supportsLightMode && !nightMode
         if (!routeActive) {
             if (useLightPalette) {
-                val colors = if (style == GeelyClusterThemeStyle.HERITAGE_GOLD) {
-                    intArrayOf(Color.rgb(239, 234, 224), Color.rgb(247, 244, 236), Color.rgb(235, 228, 214))
-                } else {
-                    intArrayOf(Color.rgb(232, 236, 240), Color.rgb(242, 244, 247), Color.rgb(228, 233, 238))
-                }
                 fillPaint.shader = LinearGradient(
                     0f, 0f, 1920f, 720f,
-                    colors,
+                    intArrayOf(Color.rgb(232, 236, 240), Color.rgb(242, 244, 247), Color.rgb(228, 233, 238)),
                     floatArrayOf(0f, 0.5f, 1f),
                     Shader.TileMode.CLAMP,
                 )
@@ -136,75 +129,76 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         val dividerY = 366f
         val dateBaseY = 410f
 
-        val timeColor = when {
-            style == GeelyClusterThemeStyle.RETRO_VFD && !useLightPalette -> accentColor
-            style == GeelyClusterThemeStyle.RETRO_VFD -> Color.rgb(18, 36, 28)
-            style == GeelyClusterThemeStyle.HERITAGE_GOLD && useLightPalette -> Color.rgb(35, 29, 20)
-            style == GeelyClusterThemeStyle.HERITAGE_GOLD -> Color.rgb(253, 248, 238)
-            useLightPalette -> Color.rgb(24, 32, 44)
-            else -> Color.argb(246, 248, 250, 252)
-        }
-        val dateColor = when {
-            style == GeelyClusterThemeStyle.RETRO_VFD -> if (useLightPalette) Color.rgb(217, 119, 6) else Color.rgb(255, 176, 32)
-            style == GeelyClusterThemeStyle.HERITAGE_GOLD -> if (useLightPalette) Color.rgb(115, 101, 78) else Color.rgb(235, 216, 179)
-            useLightPalette -> Color.rgb(71, 85, 105)
-            else -> Color.argb(210, 203, 213, 225)
-        }
+        val timeColor = if (useLightPalette) Color.rgb(24, 32, 44) else Color.argb(246, 248, 250, 252)
+        val dateColor = if (useLightPalette) Color.rgb(71, 85, 105) else Color.argb(210, 203, 213, 225)
 
         val timeTypeface = when (style) {
-            GeelyClusterThemeStyle.HERITAGE_GOLD -> Typeface.create(Typeface.SERIF, Typeface.NORMAL)
-            GeelyClusterThemeStyle.RETRO_VFD -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            GeelyClusterThemeStyle.AERO_MECHA -> Typeface.create("sans-serif", Typeface.BOLD_ITALIC)
-            GeelyClusterThemeStyle.NORDIC_GLASS -> Typeface.create("sans-serif-light", Typeface.NORMAL)
-            GeelyClusterThemeStyle.SPORT_CHRONO -> Typeface.create("sans-serif", Typeface.BOLD)
+            GeelyClusterThemeStyle.PHANTOM_STEALTH -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            GeelyClusterThemeStyle.AERO_MECHA,
+            GeelyClusterThemeStyle.HYPER_WING -> Typeface.create("sans-serif", Typeface.BOLD_ITALIC)
+            GeelyClusterThemeStyle.ORBIT_RADAR -> Typeface.create("sans-serif-light", Typeface.NORMAL)
+            GeelyClusterThemeStyle.VALKYRIE_HEX,
+            GeelyClusterThemeStyle.TITAN_CORE -> Typeface.create("sans-serif", Typeface.BOLD)
         }
-        val dateTypeface = when (style) {
-            GeelyClusterThemeStyle.HERITAGE_GOLD -> Typeface.create(Typeface.SERIF, Typeface.NORMAL)
-            GeelyClusterThemeStyle.RETRO_VFD,
-            GeelyClusterThemeStyle.AERO_MECHA -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            GeelyClusterThemeStyle.NORDIC_GLASS -> Typeface.create("sans-serif-light", Typeface.NORMAL)
-            GeelyClusterThemeStyle.SPORT_CHRONO -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        }
+        val dateTypeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
 
         // Theme-specific subtle framing accents around the center clock
-        if (style == GeelyClusterThemeStyle.AERO_MECHA) {
-            strokePaint.strokeWidth = 2.2f
-            strokePaint.strokeCap = Paint.Cap.ROUND
-            strokePaint.color = withAlpha(accentColor, if (useLightPalette) 145 else 150)
-            canvas.drawLine(centerX - 186f, 234f, centerX - 166f, 234f, strokePaint)
-            canvas.drawLine(centerX - 186f, 234f, centerX - 186f, 420f, strokePaint)
-            canvas.drawLine(centerX - 186f, 420f, centerX - 166f, 420f, strokePaint)
-            canvas.drawLine(centerX + 186f, 234f, centerX + 166f, 234f, strokePaint)
-            canvas.drawLine(centerX + 186f, 234f, centerX + 186f, 420f, strokePaint)
-            canvas.drawLine(centerX + 186f, 420f, centerX + 166f, 420f, strokePaint)
-        } else if (style == GeelyClusterThemeStyle.RETRO_VFD) {
-            strokePaint.strokeWidth = 1.6f
-            strokePaint.color = withAlpha(accentColor, if (useLightPalette) 125 else 95)
-            arcRect.set(centerX - 196f, 222f, centerX + 196f, 432f)
-            canvas.drawRoundRect(arcRect, 14f, 14f, strokePaint)
+        when (style) {
+            GeelyClusterThemeStyle.AERO_MECHA -> {
+                strokePaint.strokeWidth = 2.2f
+                strokePaint.strokeCap = Paint.Cap.ROUND
+                strokePaint.color = withAlpha(accentColor, if (useLightPalette) 145 else 150)
+                canvas.drawLine(centerX - 186f, 234f, centerX - 166f, 234f, strokePaint)
+                canvas.drawLine(centerX - 186f, 234f, centerX - 186f, 420f, strokePaint)
+                canvas.drawLine(centerX - 186f, 420f, centerX - 166f, 420f, strokePaint)
+                canvas.drawLine(centerX + 186f, 234f, centerX + 166f, 234f, strokePaint)
+                canvas.drawLine(centerX + 186f, 234f, centerX + 186f, 420f, strokePaint)
+                canvas.drawLine(centerX + 186f, 420f, centerX + 166f, 420f, strokePaint)
+            }
+            GeelyClusterThemeStyle.HYPER_WING,
+            GeelyClusterThemeStyle.VALKYRIE_HEX,
+            GeelyClusterThemeStyle.TITAN_CORE,
+            GeelyClusterThemeStyle.PHANTOM_STEALTH -> {
+                strokePaint.strokeWidth = 2.2f
+                strokePaint.strokeCap = Paint.Cap.ROUND
+                strokePaint.color = withAlpha(accentColor, if (useLightPalette) 145 else 155)
+                // Left chamfered tactical bracket
+                canvas.drawLine(centerX - 170f, 224f, centerX - 196f, 246f, strokePaint)
+                canvas.drawLine(centerX - 196f, 246f, centerX - 196f, 398f, strokePaint)
+                canvas.drawLine(centerX - 196f, 398f, centerX - 170f, 420f, strokePaint)
+                // Right chamfered tactical bracket
+                canvas.drawLine(centerX + 170f, 224f, centerX + 196f, 246f, strokePaint)
+                canvas.drawLine(centerX + 196f, 246f, centerX + 196f, 398f, strokePaint)
+                canvas.drawLine(centerX + 196f, 398f, centerX + 170f, 420f, strokePaint)
+            }
+            GeelyClusterThemeStyle.ORBIT_RADAR -> {
+                strokePaint.strokeWidth = 2.0f
+                strokePaint.strokeCap = Paint.Cap.ROUND
+                strokePaint.color = withAlpha(accentColor, if (useLightPalette) 145 else 150)
+                // Aviation HUD horizontal horizon ticks
+                canvas.drawLine(centerX - 198f, 326f, centerX - 170f, 326f, strokePaint)
+                canvas.drawLine(centerX - 170f, 326f, centerX - 170f, 340f, strokePaint)
+                canvas.drawLine(centerX + 198f, 326f, centerX + 170f, 326f, strokePaint)
+                canvas.drawLine(centerX + 170f, 326f, centerX + 170f, 340f, strokePaint)
+            }
         }
 
         // Large digital clock (`HH:mm`)
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.typeface = timeTypeface
-        textPaint.textSize = if (style == GeelyClusterThemeStyle.RETRO_VFD) 114f else 128f
-        if (style == GeelyClusterThemeStyle.RETRO_VFD && !useLightPalette) {
-            textPaint.color = withAlpha(accentColor, 68)
-            canvas.drawText(timeText, centerX, timeBaseY + 2f, textPaint)
-        }
+        textPaint.textSize = 128f
         textPaint.color = timeColor
         canvas.drawText(timeText, centerX, timeBaseY, textPaint)
 
         // Accent hairline divider between clock and date
-        val divHalf = if (style == GeelyClusterThemeStyle.HERITAGE_GOLD) 118f else 92f
         strokePaint.strokeWidth = 2.4f
         strokePaint.strokeCap = Paint.Cap.ROUND
         strokePaint.color = withAlpha(accentColor, if (useLightPalette) 170 else 185)
-        canvas.drawLine(centerX - divHalf, dividerY, centerX + divHalf, dividerY, strokePaint)
+        canvas.drawLine(centerX - 92f, dividerY, centerX + 92f, dividerY, strokePaint)
 
         // Date & weekday (`M月d日  ·  星期X`)
         textPaint.typeface = dateTypeface
-        textPaint.textSize = if (style == GeelyClusterThemeStyle.RETRO_VFD) 25f else 28f
+        textPaint.textSize = 28f
         textPaint.color = dateColor
         canvas.drawText(dateText, centerX, dateBaseY, textPaint)
 

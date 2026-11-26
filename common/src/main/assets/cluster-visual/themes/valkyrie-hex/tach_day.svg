@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 520" width="520" height="520">
+  <defs>
+    <radialGradient id="dialBg" cx="260" cy="260" r="245" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F8FAFC" stop-opacity="0.95"/>
+      <stop offset="82%" stop-color="#E2E8F0" stop-opacity="0.90"/>
+      <stop offset="100%" stop-color="#CBD5E1" stop-opacity="0.65"/>
+    </radialGradient>
+  </defs>
+  <path d="M 485.43 353.37 L 353.37 485.43 L 166.63 485.43 L 34.57 353.37 L 34.57 166.63 L 166.63 34.57 L 353.37 34.57 L 485.43 166.63 Z" fill="url(#dialBg)" data-fixed-color="true"/>
+  <path d="M 483.58 352.61 L 352.61 483.58 L 167.39 483.58 L 36.42 352.61 L 36.42 167.39 L 167.39 36.42 L 352.61 36.42 L 483.58 167.39 Z" fill="none" stroke="#7C3AED" stroke-opacity="0.62" stroke-width="2.4" data-replace-tint="true"/>
+  <path d="M 474.34 348.78 L 348.78 474.34 L 171.22 474.34 L 45.66 348.78 L 45.66 171.22 L 171.22 45.66 L 348.78 45.66 L 474.34 171.22 Z" fill="none" stroke="#0284C7" stroke-opacity="0.35" stroke-width="1.2" data-fixed-color="true"/>
+  <path d="M 105 42 L 76 76 L 42 105 M 415 42 L 444 76 L 478 105 M 105 478 L 76 444 L 42 415 M 415 478 L 444 444 L 478 415" fill="none" stroke="#0284C7" stroke-opacity="0.92" stroke-width="3" stroke-linecap="round" data-fixed-color="true"/>
+  <path d="M 178 418 L 192 404 L 328 404 L 342 418 L 328 438 L 192 438 Z" fill="#E2E8F0" fill-opacity="0.90" data-fixed-color="true"/>
+  <path d="M 178 418 L 192 404 L 328 404 L 342 418 L 328 438 L 192 438 Z" fill="none" stroke="#7C3AED" stroke-opacity="0.60" stroke-width="1.6" data-replace-tint="true"/>
+</svg>
+

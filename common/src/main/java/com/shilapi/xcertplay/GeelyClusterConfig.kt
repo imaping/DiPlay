@@ -68,48 +68,55 @@ internal enum class GeelyClusterThemeStyle(
     val description: String,
     val supportsLightMode: Boolean = true,
 ) {
-    SPORT_CHRONO(
-        displayName = "赛道计时 · 运动指针",
-        shortLabel = "赛道计时",
-        description = "保时捷运动指针 + 顶部 9 颗动态换挡灯珠 + 碳纤维表底（支持昼夜）",
-        supportsLightMode = true,
-    ),
-    HERITAGE_GOLD(
-        displayName = "典藏鎏金 · 奢华机械",
-        shortLabel = "典藏鎏金",
-        description = "瑞士铁轨刻度 + 立体剑形指针 + 夜间墨玉金 / 日间象牙陶瓷盘",
-        supportsLightMode = true,
-    ),
     AERO_MECHA(
         displayName = "机甲光翼 · 未来战术",
         shortLabel = "机甲光翼",
         description = "战术切角双翼外框 + 28 格独立发光 LED 能量块 + 斜体数字（支持昼夜）",
         supportsLightMode = true,
     ),
-    NORDIC_GLASS(
-        displayName = "北欧冰川 · 液态玻璃",
-        shortLabel = "北欧冰川",
-        description = "通透冰霜玻璃环 + 镜面高光边 + 悬浮流光圆点（支持昼夜）",
+    HYPER_WING(
+        displayName = "超跑双翼 · 极速光刃",
+        shortLabel = "超跑双翼",
+        description = "左右镜像 C 形开口光翼 + 24 枚渐宽能量刃 + 顶部 5 格换挡条（支持昼夜）",
         supportsLightMode = true,
     ),
-    RETRO_VFD(
-        displayName = "复古微光 · 荧光液晶",
-        shortLabel = "复古微光",
-        description = "80s VFD 荧光微点阵底 + 36 枚阶梯荧光柱 + 格栅油量条（支持昼夜）",
+    VALKYRIE_HEX(
+        displayName = "女武神 · 六维装甲",
+        shortLabel = "女武神",
+        description = "八边形切角双层装甲框 + 紫青双色能量矩阵 + 13 颗联动菱形节点（支持昼夜）",
+        supportsLightMode = true,
+    ),
+    ORBIT_RADAR(
+        displayName = "量子雷达 · 脉冲星环",
+        shortLabel = "量子雷达",
+        description = "45° 方位缺口全息雷达 + 36 枚高频脉冲光束 + 航空地平线准星（支持昼夜）",
+        supportsLightMode = true,
+    ),
+    TITAN_CORE(
+        displayName = "泰坦核心 · 重装反应堆",
+        shortLabel = "泰坦核心",
+        description = "外圈 12 枚宽体装甲模块 + 内圈 36 枚同步微针 + 重型机械锁止翼（支持昼夜）",
+        supportsLightMode = true,
+    ),
+    PHANTOM_STEALTH(
+        displayName = "幽灵隐形 · 暗影战机",
+        shortLabel = "幽灵战机",
+        description = "隐形战机尖角折线翼 + 18 枚刀锋节流阀弧 + 滑动三角瞄准游标（支持昼夜）",
         supportsLightMode = true,
     );
 
     fun defaultAccentColor(nightMode: Boolean): Int = when (this) {
-        SPORT_CHRONO -> if (nightMode) 0xFFFF3B30.toInt() else 0xFFD92D20.toInt()
-        HERITAGE_GOLD -> if (nightMode) 0xFFDEB973.toInt() else 0xFF8F6A2E.toInt()
         AERO_MECHA -> if (nightMode) 0xFF00E5FF.toInt() else 0xFF0284C7.toInt()
-        NORDIC_GLASS -> if (nightMode) 0xFF38BDF8.toInt() else 0xFF0369A1.toInt()
-        RETRO_VFD -> if (nightMode) 0xFF2EE6A6.toInt() else 0xFF059669.toInt()
+        HYPER_WING -> if (nightMode) 0xFFFF6B00.toInt() else 0xFFEA580C.toInt()
+        VALKYRIE_HEX -> if (nightMode) 0xFFA855F7.toInt() else 0xFF7C3AED.toInt()
+        ORBIT_RADAR -> if (nightMode) 0xFF22D3EE.toInt() else 0xFF0284C7.toInt()
+        TITAN_CORE -> if (nightMode) 0xFFF59E0B.toInt() else 0xFFB45309.toInt()
+        PHANTOM_STEALTH -> if (nightMode) 0xFF10B981.toInt() else 0xFF047857.toInt()
     }
 
     companion object {
         fun fromName(raw: String?): GeelyClusterThemeStyle =
-            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: SPORT_CHRONO
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: AERO_MECHA
     }
 }
 
@@ -160,7 +167,7 @@ internal data class GeelySelfDrawConfig(
     val albumArtEnabled: Boolean = true,
     val bottomBarEnabled: Boolean = true,
     val dialColorMode: GeelyDialColorMode = GeelyDialColorMode.DEFAULT,
-    val dialThemeStyle: GeelyClusterThemeStyle = GeelyClusterThemeStyle.SPORT_CHRONO,
+    val dialThemeStyle: GeelyClusterThemeStyle = GeelyClusterThemeStyle.AERO_MECHA,
     val appearanceMode: GeelyClusterAppearanceMode = GeelyClusterAppearanceMode.AUTO,
     val launchThemeOnStart: Boolean = false,
     val preferredDisplayId: Int = 2,

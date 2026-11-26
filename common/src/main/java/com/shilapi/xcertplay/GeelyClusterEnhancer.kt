@@ -1816,7 +1816,7 @@ private class GeelyClusterSettingsPanel(
             },
         )
 
-        val styleRows = GeelyClusterThemeStyle.entries.chunked(5)
+        val styleRows = GeelyClusterThemeStyle.entries.chunked(3)
         for ((rowIdx, rowStyles) in styleRows.withIndex()) {
             val themeRow = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL

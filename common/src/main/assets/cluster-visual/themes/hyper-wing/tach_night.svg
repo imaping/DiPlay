@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 520" width="520" height="520">
+  <defs>
+    <radialGradient id="dialBg" cx="260" cy="260" r="244" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10121A" stop-opacity="0.93"/>
+      <stop offset="76%" stop-color="#080A10" stop-opacity="0.86"/>
+      <stop offset="100%" stop-color="#05070B" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="260" cy="260" r="244" fill="url(#dialBg)" data-fixed-color="true"/>
+  <path d="M 80.38 103.86 A 238.00 238.00 0 1 1 329.58 487.60" fill="none" stroke="#FF6B00" stroke-opacity="0.58" stroke-width="2.6" data-replace-tint="true"/>
+  <path d="M 182 436 L 196 406 L 338 406 L 324 436 Z" fill="#0F172A" fill-opacity="0.75" data-fixed-color="true"/>
+  <path d="M 182 436 L 196 406 L 338 406 L 324 436 Z" fill="none" stroke="#FF6B00" stroke-opacity="0.58" stroke-width="1.6" data-replace-tint="true"/>
+</svg>
+

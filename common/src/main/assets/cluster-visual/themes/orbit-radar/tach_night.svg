@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 520" width="520" height="520">
+  <defs>
+    <radialGradient id="dialBg" cx="260" cy="260" r="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0A121E" stop-opacity="0.82"/>
+      <stop offset="75%" stop-color="#060B14" stop-opacity="0.72"/>
+      <stop offset="100%" stop-color="#060B14" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="260" cy="260" r="240" fill="url(#dialBg)" data-fixed-color="true"/>
+  <path d="M 79.21 411.70 A 236.00 236.00 0 0 1 66.68 124.64" fill="none" stroke="#22D3EE" stroke-opacity="0.42" stroke-width="1.6" data-replace-tint="true"/>
+  <path d="M 124.64 66.68 A 236.00 236.00 0 0 1 395.36 66.68" fill="none" stroke="#22D3EE" stroke-opacity="0.42" stroke-width="1.6" data-replace-tint="true"/>
+  <path d="M 453.32 124.64 A 236.00 236.00 0 0 1 440.79 411.70" fill="none" stroke="#22D3EE" stroke-opacity="0.42" stroke-width="1.6" data-replace-tint="true"/>
+  <line x1="100.19" y1="419.81" x2="88.88" y2="431.12" stroke="#22D3EE" stroke-opacity="0.95" stroke-width="2.4" data-replace-tint="true"/>
+  <line x1="100.19" y1="100.19" x2="88.88" y2="88.88" stroke="#22D3EE" stroke-opacity="0.95" stroke-width="2.4" data-replace-tint="true"/>
+  <line x1="419.81" y1="100.19" x2="431.12" y2="88.88" stroke="#22D3EE" stroke-opacity="0.95" stroke-width="2.4" data-replace-tint="true"/>
+  <line x1="419.81" y1="419.81" x2="431.12" y2="431.12" stroke="#22D3EE" stroke-opacity="0.95" stroke-width="2.4" data-replace-tint="true"/>
+  <path d="M 134 260 L 162 260 L 162 270 M 386 260 L 358 260 L 358 270" fill="none" stroke="#22D3EE" stroke-opacity="0.55" stroke-width="1.8" data-replace-tint="true"/>
+  <path d="M 141.21 378.79 A 168.00 168.00 0 1 1 378.79 378.79" fill="none" stroke="#22D3EE" stroke-opacity="0.25" stroke-width="1.2" data-replace-tint="true"/>
+</svg>
+
