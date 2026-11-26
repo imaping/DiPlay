@@ -619,7 +619,6 @@ internal object GeelyClusterEnhancer {
         }
 
         if (available.size <= 1) {
-            currentFakeUltraView?.showModeSwitchToast("大号数字时钟（未连接 CarPlay）")
             return "CLOCK(no-carplay)"
         }
 
@@ -627,9 +626,6 @@ internal object GeelyClusterEnhancer {
         val nextMode = available[(currentIdx + 1) % available.size]
         GeelyClusterPrefs.save(app, cfg.copy(centerMode = nextMode))
         refreshConfig(app)
-        runOnMain {
-            currentFakeUltraView?.showModeSwitchToast("仪表显示 · ${nextMode.displayName}")
-        }
         return nextMode.name
     }
 

@@ -1053,17 +1053,9 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
 
     private val blurPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val toastStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val toastTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER
-        textSize = 23f
-    }
-    private val toastRect = RectF()
     private val centerCoverClip = Path()
     private val centerCoverRect = RectF()
     private val timeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
-    private var modeToastText: String? = null
-    private var modeToastStartMs: Long = 0L
 
     init {
         isClickable = false
@@ -1100,12 +1092,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     }
 
     fun hasUsableArtwork(): Boolean = rawArtwork != null && rawArtwork?.isRecycled == false
-
-    fun showModeSwitchToast(label: String) {
-        modeToastText = label
-        modeToastStartMs = SystemClock.uptimeMillis()
-        invalidate()
-    }
 
     /** Clears CarPlay-only media/navigation state on phone disconnect while keeping dials running. */
     fun clearCarPlayData() {
@@ -1316,10 +1302,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
         }
 
-        if (!previewMode && drawModeSwitchToastIfActive(canvas, themeStyle, currentAccent, SystemClock.uptimeMillis())) {
-            needsNextFrame = true
-        }
-
         canvas.restoreToCount(save)
         if (needsNextFrame) {
             postInvalidateOnAnimation()
@@ -1376,57 +1358,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         canvas.restoreToCount(save)
     }
 
-    private fun drawModeSwitchToastIfActive(
-        canvas: Canvas,
-        style: GeelyClusterThemeStyle,
-        accentColor: Int,
-        nowUptimeMs: Long,
-    ): Boolean {
-        val label = modeToastText ?: return false
-        val elapsed = nowUptimeMs - modeToastStartMs
-        if (elapsed < 0L || elapsed > MODE_TOAST_DURATION_MS) {
-            modeToastText = null
-            return false
-        }
-        val alphaFrac = when {
-            elapsed < 140L -> elapsed / 140f
-            elapsed > MODE_TOAST_DURATION_MS - 320L -> (MODE_TOAST_DURATION_MS - elapsed) / 320f
-            else -> 1f
-        }.coerceIn(0f, 1f)
-        val light = style.supportsLightMode && !nightMode
-
-        toastTextPaint.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
-        val textW = toastTextPaint.measureText(label)
-        val pillW = (textW + 64f).coerceIn(220f, 460f)
-        val pillH = 48f
-        val left = 960f - pillW / 2f
-        val top = 34f
-        toastRect.set(left, top, left + pillW, top + pillH)
-
-        val bgAlpha = ((if (light) 232 else 224) * alphaFrac).roundToInt().coerceIn(0, 255)
-        scrimPaint.color = if (light) Color.argb(bgAlpha, 248, 250, 253) else Color.argb(bgAlpha, 16, 22, 32)
-        canvas.drawRoundRect(toastRect, 24f, 24f, scrimPaint)
-
-        toastStrokePaint.strokeWidth = 1.8f
-        toastStrokePaint.color = Color.argb(
-            (200 * alphaFrac).roundToInt().coerceIn(0, 255),
-            Color.red(accentColor),
-            Color.green(accentColor),
-            Color.blue(accentColor),
-        )
-        canvas.drawRoundRect(toastRect, 24f, 24f, toastStrokePaint)
-
-        toastTextPaint.color = if (light) {
-            Color.argb((245 * alphaFrac).roundToInt(), 24, 34, 48)
-        } else {
-            Color.argb((248 * alphaFrac).roundToInt(), 245, 248, 252)
-        }
-        canvas.drawText(label, 960f, top + 32f, toastTextPaint)
-        return true
-    }
-
     companion object {
-        private const val MODE_TOAST_DURATION_MS = 1_650L
         private const val DIAL_SCALE = 0.92f
         private const val DIAL_TOP_Y = 68f
         private const val LEFT_DIAL_X = 112f
