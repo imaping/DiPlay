@@ -108,14 +108,6 @@ internal class GeelyUltraThemeRenderer(context: Context) {
             Shader.TileMode.CLAMP,
         )
         canvas.drawRect(0f, 0f, 1920f, 118f, fillPaint)
-
-        fillPaint.shader = LinearGradient(
-            0f, 640f, 0f, 720f,
-            intArrayOf(baseRgb, (165 shl 24) or baseRgb, (230 shl 24) or baseRgb),
-            floatArrayOf(0f, 0.45f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-        canvas.drawRect(0f, 640f, 1920f, 720f, fillPaint)
         fillPaint.shader = null
     }
 
@@ -218,9 +210,9 @@ internal class GeelyUltraThemeRenderer(context: Context) {
     }
 
     /**
-     * Centered floating music visualizer & song title pill positioned cleanly above the factory
-     * QNX bottom status strip (`Y: 588..636`), with frosted capsule backing for high contrast
-     * regardless of whether the factory bottom bar is light or dark.
+     * Centered floating music visualizer & song/lyrics pill positioned in the open bottom center
+     * region (`Y: 656..704`) between the factory QNX bottom-left and bottom-right status wings,
+     * with frosted capsule backing for high contrast over both maps and standby backdrops.
      */
     fun drawUltraBottomMusicBar(
         canvas: Canvas,
@@ -236,8 +228,8 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         val useLightPalette = style.supportsLightMode && !nightMode
         val pillBgColor = if (useLightPalette) Color.argb(218, 245, 248, 252) else Color.argb(196, 10, 14, 22)
         val pillStrokeColor = if (useLightPalette) Color.argb(92, 71, 85, 105) else withAlpha(accentColor, 115)
-        val pillTop = 588f
-        val pillBottom = 636f
+        val pillTop = 656f
+        val pillBottom = 704f
         val pillRadius = 24f
 
         val title = songTitle?.trim().orEmpty()
@@ -249,7 +241,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
             textPaint.textSize = 21f
             textPaint.textAlign = Paint.Align.CENTER
             val textW = textPaint.measureText(text)
-            val halfW = max(92f, textW / 2f + 24f).coerceAtMost(280f)
+            val halfW = max(92f, textW / 2f + 24f).coerceAtMost(246f)
             arcRect.set(960f - halfW, pillTop + 3f, 960f + halfW, pillBottom - 3f)
             fillPaint.color = pillBgColor
             canvas.drawRoundRect(arcRect, 21f, 21f, fillPaint)
@@ -258,7 +250,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
             canvas.drawRoundRect(arcRect, 21f, 21f, strokePaint)
 
             textPaint.color = if (useLightPalette) Color.rgb(36, 44, 54) else Color.argb(232, 232, 238, 246)
-            canvas.drawText(text, 960f, 619f, textPaint)
+            canvas.drawText(text, 960f, pillTop + 31f, textPaint)
             return false
         }
 
@@ -268,12 +260,12 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textPaint.textSize = 24f
         textPaint.textAlign = Paint.Align.LEFT
-        val displayTitle = ellipsize(title, textPaint, 420f)
+        val displayTitle = ellipsize(title, textPaint, 400f)
         val textW = textPaint.measureText(displayTitle)
         val eqW = 24f
         val gap = 10f
         val totalW = eqW + gap + textW
-        val pillHalfW = max(112f, totalW / 2f + 26f).coerceAtMost(276f)
+        val pillHalfW = max(112f, totalW / 2f + 26f).coerceAtMost(246f)
 
         // Floating frosted rounded pill backdrop
         arcRect.set(960f - pillHalfW, pillTop, 960f + pillHalfW, pillBottom)
@@ -284,7 +276,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         canvas.drawRoundRect(arcRect, pillRadius, pillRadius, strokePaint)
 
         val startX = 960f - totalW / 2f
-        val baselineY = 620f
+        val baselineY = pillTop + 32f
 
         val phase = (nowMs % 1200L) / 1200f * (2f * PI.toFloat())
         val h1 = if (isPlaying) 6f + 6f * (0.5f + 0.5f * sin(phase)) else 6f
