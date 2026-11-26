@@ -70,6 +70,8 @@ internal object GeelyClusterEnhancer {
     private var activeDimController: GeelyDimMenuController? = null
     private var activeDimWatcher: GeelyDimLogcatWatcher? = null
     private var musicSubscription: (() -> Unit)? = null
+    private var vehicleMediaSubscription: (() -> Unit)? = null
+    private var lastVehicleMediaSnapshot: GeelyVehicleMediaSnapshot = GeelyVehicleMediaSnapshot()
     private var hostNightObserverRemoval: (() -> Unit)? = null
     private var vehicleDayNightRemoval: (() -> Unit)? = null
     private var carPlayNightSink: ((Boolean) -> Unit)? = null
@@ -163,6 +165,29 @@ internal object GeelyClusterEnhancer {
             carPlayNightSink?.invoke(vehicleNight)
             runOnMain { applyEffectiveNight(app) }
         }
+    }
+
+    private fun ensureVehicleMediaObserver(context: Context) {
+        val app = context.applicationContext
+        if (vehicleMediaSubscription != null) {
+            GeelyVehicleMediaObserver.refresh(app)
+            return
+        }
+        vehicleMediaSubscription = GeelyVehicleMediaObserver.observe(app, hostLogger) { snapshot ->
+            lastVehicleMediaSnapshot = snapshot
+            runOnMain { applyVehicleMediaIfStandby() }
+        }
+    }
+
+    private fun stopVehicleMediaObserver() {
+        vehicleMediaSubscription?.invoke()
+        vehicleMediaSubscription = null
+        lastVehicleMediaSnapshot = GeelyVehicleMediaSnapshot()
+    }
+
+    private fun applyVehicleMediaIfStandby() {
+        if (isFullScreenPresentationActive) return
+        currentFakeUltraView?.applyVehicleMedia(lastVehicleMediaSnapshot)
     }
 
     private fun ensureHostNightObserver() {
@@ -287,7 +312,10 @@ internal object GeelyClusterEnhancer {
         closeStandaloneOverlayWindow()
         val keepThemeAlive = isPersistentThemeActive() &&
             (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
-        if (!keepThemeAlive) {
+        if (keepThemeAlive) {
+            applyVehicleMediaIfStandby()
+        } else {
+            stopVehicleMediaObserver()
             hostNightObserverRemoval?.invoke()
             hostNightObserverRemoval = null
             vehicleDayNightRemoval?.invoke()
@@ -308,6 +336,7 @@ internal object GeelyClusterEnhancer {
         GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
         ensureVehicleDayNightObserver(app)
+        ensureVehicleMediaObserver(app)
         runOnMain {
             syncPersistentThemeWindow(app, requestFullScreen = true)
         }
@@ -364,6 +393,7 @@ internal object GeelyClusterEnhancer {
         val app = context.applicationContext
         runOnMain {
             detachBackgroundTurnListener()
+            stopVehicleMediaObserver()
             vehicleDayNightRemoval?.invoke()
             vehicleDayNightRemoval = null
             carPlayNightSink = null
@@ -599,6 +629,7 @@ internal object GeelyClusterEnhancer {
         ensureVehicleDayNightObserver(context)
         currentFakeUltraView?.apply {
             carPlayConnected = true
+            externalMediaActive = false
             routeActive = latestGuidance != null
             invalidate()
         }
@@ -606,7 +637,7 @@ internal object GeelyClusterEnhancer {
         musicSubscription?.invoke()
         musicSubscription = ClusterMusicState.observe { snapshot ->
             currentFakeUltraView?.setArtwork(snapshot.artwork)
-            currentFakeUltraView?.setMusicInfo(snapshot.info.title, snapshot.info.playing)
+            currentFakeUltraView?.setMusicInfo(snapshot.info.title, snapshot.info.playing, snapshot.info.artist)
         }
 
         val controller = ensureDimController(context)
@@ -653,7 +684,9 @@ internal object GeelyClusterEnhancer {
 
         val keepThemeAlive = isPersistentThemeActive() &&
             (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
-        if (!keepThemeAlive) {
+        if (keepThemeAlive) {
+            applyVehicleMediaIfStandby()
+        } else {
             activeDimController?.restoreClassicCluster()
         }
 
@@ -680,26 +713,27 @@ internal object GeelyClusterEnhancer {
         val cfg = GeelyClusterPrefs.load(app)
         val hasCarPlay = isFullScreenPresentationActive
         val hasArtwork = currentFakeUltraView?.hasUsableArtwork() == true
+        val hasMediaAlbum = hasArtwork && (hasCarPlay || lastVehicleMediaSnapshot.hasContent)
         val routeNow = hasCarPlay && latestGuidance != null
 
         val available = ArrayList<GeelyClusterCenterMode>(3)
         if (hasCarPlay) available.add(GeelyClusterCenterMode.MAP)
-        if (hasCarPlay && hasArtwork) available.add(GeelyClusterCenterMode.ALBUM)
+        if (hasMediaAlbum) available.add(GeelyClusterCenterMode.ALBUM)
         available.add(GeelyClusterCenterMode.CLOCK)
 
         val currentVisible = when (cfg.centerMode) {
             GeelyClusterCenterMode.MAP -> if (hasCarPlay) GeelyClusterCenterMode.MAP else GeelyClusterCenterMode.CLOCK
-            GeelyClusterCenterMode.ALBUM -> if (hasCarPlay && hasArtwork) GeelyClusterCenterMode.ALBUM else GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.ALBUM -> if (hasMediaAlbum) GeelyClusterCenterMode.ALBUM else GeelyClusterCenterMode.CLOCK
             GeelyClusterCenterMode.CLOCK -> GeelyClusterCenterMode.CLOCK
             GeelyClusterCenterMode.AUTO -> when {
-                !routeNow && cfg.albumArtEnabled && hasArtwork -> GeelyClusterCenterMode.ALBUM
+                !routeNow && cfg.albumArtEnabled && hasMediaAlbum -> GeelyClusterCenterMode.ALBUM
                 routeNow -> GeelyClusterCenterMode.MAP
                 else -> GeelyClusterCenterMode.CLOCK
             }
         }
 
         if (available.size <= 1) {
-            return "CLOCK(no-carplay)"
+            return "CLOCK(no-media)"
         }
 
         val currentIdx = available.indexOf(currentVisible)
@@ -791,11 +825,15 @@ internal object GeelyClusterEnhancer {
         if (currentWindow != null && currentWindow.attached &&
             currentWindow.display.displayId == targetDisplay.displayId
         ) {
+            ensureVehicleMediaObserver(appContext)
             currentWindow.view.apply {
                 config = cfg
                 nightMode = effectiveNight
                 carPlayConnected = isFullScreenPresentationActive
                 routeActive = isFullScreenPresentationActive && latestGuidance != null
+                if (!isFullScreenPresentationActive) {
+                    applyVehicleMedia(lastVehicleMediaSnapshot)
+                }
                 invalidate()
             }
             GeelyClusterKeepAliveService.start(appContext)
@@ -809,11 +847,15 @@ internal object GeelyClusterEnhancer {
         closePersistentThemeWindow()
         val newWindow = GeelyClusterThemeWindow(appContext, targetDisplay, hostLogger)
         if (newWindow.attach()) {
+            ensureVehicleMediaObserver(appContext)
             newWindow.view.apply {
                 config = cfg
                 nightMode = effectiveNight
                 carPlayConnected = isFullScreenPresentationActive
                 routeActive = isFullScreenPresentationActive && latestGuidance != null
+                if (!isFullScreenPresentationActive) {
+                    applyVehicleMedia(lastVehicleMediaSnapshot)
+                }
                 invalidate()
             }
             persistentThemeWindow = newWindow
@@ -838,6 +880,7 @@ internal object GeelyClusterEnhancer {
 
     private fun shutdownPersistentTheme(appContext: Context, handBackIfIdle: Boolean) {
         val wasAttached = isPersistentThemeActive()
+        stopVehicleMediaObserver()
         closePersistentThemeWindow()
         activeFakeUltraView?.visibility = View.VISIBLE
         GeelyClusterKeepAliveService.stop(appContext)
@@ -1826,6 +1869,27 @@ private class GeelyClusterSettingsPanel(
                 bottomMargin = dp(10)
             },
         )
+        val hasNotifAccess = GeelyMediaNotificationListenerService.isEnabled(activity)
+        val mediaPermBtn = createActionButton(
+            if (hasNotifAccess) "车机音乐与歌词读取权限已开启 · 管理通知使用权"
+            else "开启车机音乐与歌词读取权限 (网易云 / QQ 音乐 / 蓝牙)"
+        ) {
+            runCatching {
+                activity.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }.onFailure {
+                Toast.makeText(
+                    activity,
+                    "车机未提供此权限页面，可通过 ADB 授予通知使用权",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+        container.addView(
+            mediaPermBtn,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
+                bottomMargin = dp(10)
+            },
+        )
         val selectDispBtn = createActionButton("选择仪表屏幕 (当前优先 ID=${config.preferredDisplayId})") {
             showDisplayPickerDialog()
         }
@@ -1835,7 +1899,7 @@ private class GeelyClusterSettingsPanel(
         )
         container.addView(
             TextView(activity).apply {
-                text = "允许悬浮窗权限可提高独立导航输出的兼容性，在经典仪表模式下也能持续为原车 W-HUD 与经典仪表小卡提供导航源。"
+                text = "允许悬浮窗权限可提高独立导航与常驻仪表主题的兼容性；开启通知使用权后，不连 CarPlay 也能读取网易云、QQ 音乐与蓝牙音乐的专辑封面及实时歌词。"
                 setTextColor(colors.secondaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setPadding(0, dp(10), 0, 0)

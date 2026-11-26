@@ -119,6 +119,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         style: GeelyClusterThemeStyle,
         nightMode: Boolean,
         accentColor: Int = style.defaultAccentColor(nightMode),
+        fuelText: String? = null,
     ) {
         val useLightPalette = style.supportsLightMode && !nightMode
         val now = Date()
@@ -206,6 +207,83 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         textPaint.textSize = if (style == GeelyClusterThemeStyle.RETRO_VFD) 25f else 28f
         textPaint.color = dateColor
         canvas.drawText(dateText, centerX, dateBaseY, textPaint)
+
+        // Optional average fuel telemetry placed cleanly under the date so it never collides
+        // with the factory QNX bottom center song/status bar (`Y: 656..720`).
+        val fuel = fuelText?.trim().orEmpty()
+        if (fuel.isNotEmpty()) {
+            textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            textPaint.textSize = 20f
+            textPaint.color = withAlpha(dateColor, if (useLightPalette) 210 else 190)
+            canvas.drawText(fuel, centerX, dateBaseY + 52f, textPaint)
+        }
+    }
+
+    /**
+     * Centered two-line music visualizer, real-time lyric / song title, and artist subtitle placed
+     * in the clean center region below the album artwork (or standby clock), completely clear of
+     * the factory QNX bottom bar (`Y: 656..720`).
+     */
+    fun drawCenterMusicCaption(
+        canvas: Canvas,
+        style: GeelyClusterThemeStyle,
+        nightMode: Boolean,
+        primaryLine: String?,
+        secondaryLine: String?,
+        isPlaying: Boolean,
+        accentColor: Int,
+        nowMs: Long,
+        baselineY: Float,
+        overArtworkBackdrop: Boolean,
+    ): Boolean {
+        val main = primaryLine?.trim().orEmpty()
+        if (main.isEmpty()) return false
+
+        val useLightText = overArtworkBackdrop || !(style.supportsLightMode && !nightMode)
+        val primaryColor = if (useLightText) Color.argb(248, 250, 252, 255) else Color.rgb(24, 32, 44)
+        val secondaryColor = if (useLightText) Color.argb(205, 220, 228, 240) else Color.rgb(71, 85, 105)
+        val eqColor = if (useLightText) withAlpha(accentColor, 245) else accentColor
+
+        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        textPaint.textSize = 28f
+        textPaint.textAlign = Paint.Align.LEFT
+        val displayMain = ellipsize(main, textPaint, 560f)
+        val textW = textPaint.measureText(displayMain)
+        val eqW = 24f
+        val gap = 12f
+        val totalW = eqW + gap + textW
+        val startX = 960f - totalW / 2f
+
+        val phase = (nowMs % 1200L) / 1200f * (2f * PI.toFloat())
+        val h1 = if (isPlaying) 7f + 7f * (0.5f + 0.5f * sin(phase)) else 7f
+        val h2 = if (isPlaying) 12f + 9f * (0.5f + 0.5f * sin(phase + 1.8f)) else 15f
+        val h3 = if (isPlaying) 8f + 8f * (0.5f + 0.5f * sin(phase + 3.6f)) else 10f
+
+        fillPaint.color = eqColor
+        val barBottom = baselineY - 2f
+        canvas.drawRoundRect(startX, barBottom - h1, startX + 4.5f, barBottom, 2f, 2f, fillPaint)
+        canvas.drawRoundRect(startX + 8.5f, barBottom - h2, startX + 13f, barBottom, 2f, 2f, fillPaint)
+        canvas.drawRoundRect(startX + 17f, barBottom - h3, startX + 21.5f, barBottom, 2f, 2f, fillPaint)
+
+        if (overArtworkBackdrop) {
+            textPaint.setShadowLayer(6f, 0f, 2f, Color.argb(170, 0, 0, 0))
+        }
+        textPaint.color = primaryColor
+        canvas.drawText(displayMain, startX + eqW + gap, baselineY, textPaint)
+
+        val sub = secondaryLine?.trim().orEmpty()
+        if (sub.isNotEmpty() && !sub.equals(main, ignoreCase = true)) {
+            textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+            textPaint.textSize = 20f
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.color = secondaryColor
+            val displaySub = ellipsize(sub, textPaint, 560f)
+            canvas.drawText(displaySub, 960f, baselineY + 34f, textPaint)
+        }
+        if (overArtworkBackdrop) {
+            textPaint.clearShadowLayer()
+        }
+        return isPlaying
     }
 
     /**
