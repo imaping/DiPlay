@@ -6,6 +6,8 @@
 
 > **BYD support scope:** These projects focus on BYD cars. They may work on other brands, but other brands are unsupported and there are no plans to add support or fix brand-specific incompatibilities.
 
+> **Fork extensions:** This fork adds Geely / ECARX (KX11) cluster themes, self-drawn W-HUD/cards, steering-wheel keys, fused GPS + wheel-speed location, native music sync, AMap auto-overview, and Cloudflare R2 diagnostic upload. See [Custom features (简体中文)](docs/CUSTOM_FEATURES.md).
+
 [Download & website](https://shihabal3amri.github.io/DiPlay/) · [Release](https://github.com/shihabal3amri/DiPlay/releases/tag/v0.2.22) · [Report a problem](https://github.com/shihabal3amri/DiPlay/issues/new/choose)
 
 ![DiPlay home](site/assets/home.png)
@@ -53,6 +55,7 @@ BYD DiLink 4.0 / Android 10 clean-install validation result.
 - [Validation](docs/VALIDATION.md)
 - [Release notes](CHANGELOG.md)
 - [Credits and licenses](docs/THIRD_PARTY_NOTICES.md)
+- [Fork custom features / 本分支新增功能说明](docs/CUSTOM_FEATURES.md)
 
 The app and the website include English, Arabic, Russian, Ukrainian, Spanish, Simplified Chinese, Traditional Chinese (Taiwan), Japanese, Italian, Korean and Turkish; the app is also available in French. Traditional Chinese uses Taiwan wording; the app also recognizes Hong Kong/Macao and explicit Hant selections without claiming separate regional translations. Choose the app language in Settings; on Android 13+, it stays synchronized with Android’s per-app language setting. See the [Traditional Chinese guide](README.zh-TW.md) for installation, settings, troubleshooting, privacy and build instructions.
 
