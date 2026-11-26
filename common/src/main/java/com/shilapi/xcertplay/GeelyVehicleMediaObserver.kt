@@ -11,6 +11,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
@@ -63,6 +64,21 @@ internal data class GeelyVehicleMediaSnapshot(
                 }
             } else {
                 cleanArtist.takeIf { it.isNotEmpty() }
+            }
+        }
+
+    val singleLineDisplay: String?
+        get() {
+            val cleanLyric = lyricLine?.trim().orEmpty()
+            if (cleanLyric.isNotEmpty()) return cleanLyric
+            val cleanTitle = title?.trim().orEmpty()
+            val cleanArtist = artist?.trim().orEmpty()
+            return when {
+                cleanTitle.isNotEmpty() && cleanArtist.isNotEmpty() &&
+                    !cleanTitle.contains(cleanArtist, ignoreCase = true) -> "$cleanTitle · $cleanArtist"
+                cleanTitle.isNotEmpty() -> cleanTitle
+                cleanArtist.isNotEmpty() -> cleanArtist
+                else -> null
             }
         }
 
@@ -139,6 +155,10 @@ internal object GeelyVehicleMediaObserver {
     private val KNOWN_MUSIC_PACKAGE_HINTS = listOf(
         "netease.cloudmusic",
         "tencent.qqmusic",
+        "qqmusiccar",
+        "wecarflow",
+        "aiquting",
+        "tencent.music",
         "kuwo",
         "kugou",
         "bluetooth",
@@ -155,6 +175,7 @@ internal object GeelyVehicleMediaObserver {
     private val IGNORED_TICKER_PHRASES = setOf(
         "网易云音乐",
         "qq音乐",
+        "爱趣听",
         "酷我音乐",
         "酷狗音乐",
         "蓝牙音乐",
@@ -251,6 +272,54 @@ internal object GeelyVehicleMediaObserver {
             if (observers.isNotEmpty()) {
                 attachMediaSessionListenerLocked(app)
             }
+        }
+        recomputeAndPublish()
+    }
+
+    /**
+     * Gracefully sends `TransportControls.stop()` to active external head-unit music sessions
+     * (e.g. NetEase Cloud Music, QQ Music) when CarPlay takes over playback, preventing stale
+     * paused tracks from lingering on the factory QNX bottom media bar.
+     */
+    fun stopExternalPlayback(context: Context) {
+        val app = context.applicationContext
+        val ownPkg = app.packageName
+        val controllers = synchronized(lock) {
+            if (trackedControllers.isNotEmpty()) {
+                trackedControllers.keys.toList()
+            } else {
+                emptyList()
+            }
+        }
+        val targets = if (controllers.isNotEmpty()) {
+            controllers
+        } else if (GeelyMediaNotificationListenerService.isEnabled(app)) {
+            runCatching {
+                val mgr = app.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+                mgr?.getActiveSessions(GeelyMediaNotificationListenerService.componentName(app))
+                    .orEmpty()
+                    .filter { it.packageName != ownPkg }
+            }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+
+        for (ctrl in targets) {
+            val state = ctrl.playbackState?.state ?: PlaybackState.STATE_NONE
+            if (state == PlaybackState.STATE_PLAYING ||
+                state == PlaybackState.STATE_PAUSED ||
+                state == PlaybackState.STATE_BUFFERING
+            ) {
+                runCatching {
+                    ctrl.transportControls.stop()
+                    emitLog("GeelyVehicleMedia: sent stop() to ${ctrl.packageName} (prevState=$state)")
+                }
+            }
+        }
+        synchronized(lock) {
+            broadcastPlaying = false
+            pausedSinceElapsedMs = 0L
+            clearRetainedArtworkLocked()
         }
         recomputeAndPublish()
     }
@@ -463,6 +532,10 @@ internal object GeelyVehicleMediaObserver {
             addAction("com.netease.cloudmusic.playstatechanged")
             addAction("com.tencent.qqmusic.metachanged")
             addAction("com.tencent.qqmusic.playstatechanged")
+            addAction("com.tencent.qqmusic.ACTION_META_CHANGED")
+            addAction("com.tencent.qqmusic.ACTION_PLAY_STATE_CHANGED")
+            addAction("com.tencent.qqmusiccar.metachanged")
+            addAction("com.tencent.qqmusiccar.playstatechanged")
             addAction("cn.kuwo.player.metachanged")
             addAction("cn.kuwo.player.playstatechanged")
         }
@@ -499,27 +572,39 @@ internal object GeelyVehicleMediaObserver {
         }
     }
 
+    private fun isSystemMusicAudioActive(context: Context?): Boolean = runCatching {
+        val am = context?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        am?.isMusicActive == true
+    }.getOrDefault(false)
+
     private fun buildSnapshot(): GeelyVehicleMediaSnapshot {
         val now = SystemClock.elapsedRealtime()
         var uriToFetch: String? = null
         var schedulePauseExpiryMs: Long? = null
 
         val snapshot = synchronized(lock) {
+            val musicAudioActive = isSystemMusicAudioActive(appContext)
             val controllers = trackedControllers.keys.toList()
-            val selected = selectBestController(controllers)
+            val selected = selectBestController(controllers, musicAudioActive)
 
             if (selected != null) {
                 val pkg = selected.packageName.orEmpty()
                 val stateCode = selected.playbackState?.state ?: PlaybackState.STATE_NONE
+                val inferredFromAudio =
+                    (stateCode == PlaybackState.STATE_NONE || stateCode == PlaybackState.STATE_CONNECTING) && musicAudioActive
                 val isPlaying = stateCode == PlaybackState.STATE_PLAYING ||
                     stateCode == PlaybackState.STATE_BUFFERING ||
                     stateCode == PlaybackState.STATE_FAST_FORWARDING ||
-                    stateCode == PlaybackState.STATE_REWINDING
+                    stateCode == PlaybackState.STATE_REWINDING ||
+                    inferredFromAudio
                 val isPaused = stateCode == PlaybackState.STATE_PAUSED
 
                 val isActive = when {
                     isPlaying -> {
                         pausedSinceElapsedMs = 0L
+                        if (inferredFromAudio) {
+                            schedulePauseExpiryMs = 3_000L
+                        }
                         true
                     }
                     isPaused -> {
@@ -614,7 +699,7 @@ internal object GeelyVehicleMediaObserver {
                 )
             }
 
-            // Fallback to legacy broadcast when MediaSessionManager is unavailable or empty
+            // Fallback: legacy broadcast when MediaSessionManager is unavailable or empty
             if (broadcastPlaying && !broadcastTitle.isNullOrBlank() &&
                 (now - broadcastUpdatedAtMs) <= 180_000L
             ) {
@@ -651,7 +736,10 @@ internal object GeelyVehicleMediaObserver {
         return snapshot
     }
 
-    private fun selectBestController(controllers: List<MediaController>): MediaController? {
+    private fun selectBestController(
+        controllers: List<MediaController>,
+        musicAudioActive: Boolean,
+    ): MediaController? {
         if (controllers.isEmpty()) return null
         fun score(c: MediaController): Int {
             val state = c.playbackState?.state ?: PlaybackState.STATE_NONE
@@ -665,6 +753,8 @@ internal object GeelyVehicleMediaObserver {
                 PlaybackState.STATE_BUFFERING,
                 PlaybackState.STATE_FAST_FORWARDING,
                 PlaybackState.STATE_REWINDING -> 90
+                PlaybackState.STATE_NONE,
+                PlaybackState.STATE_CONNECTING -> if (musicAudioActive && hasMeta) 65 else 0
                 PlaybackState.STATE_PAUSED -> 40
                 else -> 0
             }
@@ -731,16 +821,19 @@ internal object GeelyVehicleMediaObserver {
                 context.contentResolver.openInputStream(uri)?.use(InputStream::readBytes) ?: return null
             }
             "http", "https" -> {
-                val conn = (URL(rawUri).openConnection() as? HttpURLConnection) ?: return null
-                conn.connectTimeout = 4_000
-                conn.readTimeout = 4_000
-                conn.instanceFollowRedirects = true
-                try {
-                    if (conn.responseCode !in 200..299) return null
-                    conn.inputStream.use(InputStream::readBytes)
-                } finally {
-                    conn.disconnect()
+                // Android 9+ blocks cleartext HTTP by default; NetEase/QQ Music CDNs often report
+                // `http://` URLs that support HTTPS natively, so try upgrading to HTTPS first.
+                val candidates = if (scheme == "http") {
+                    listOf("https://${rawUri.substring(7)}", rawUri)
+                } else {
+                    listOf(rawUri)
                 }
+                var downloaded: ByteArray? = null
+                for (candidate in candidates) {
+                    downloaded = runCatching { downloadUrlBytes(candidate) }.getOrNull()
+                    if (downloaded != null && downloaded.isNotEmpty()) break
+                }
+                downloaded ?: return null
             }
             else -> return null
         }
@@ -761,6 +854,18 @@ internal object GeelyVehicleMediaObserver {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
     }
 
+    private fun downloadUrlBytes(url: String): ByteArray? {
+        val conn = (URL(url).openConnection() as? HttpURLConnection) ?: return null
+        conn.connectTimeout = 4_000
+        conn.readTimeout = 4_000
+        conn.instanceFollowRedirects = true
+        return try {
+            if (conn.responseCode !in 200..299) null else conn.inputStream.use(InputStream::readBytes)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     private fun isLikelyMediaNotification(pkg: String, notification: Notification): Boolean {
         if (notification.category == Notification.CATEGORY_TRANSPORT) return true
         if (notification.extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true) return true
@@ -772,9 +877,21 @@ internal object GeelyVehicleMediaObserver {
         if (raw.isEmpty() || raw.length > 96) return null
         val clean = raw.replace('\n', ' ').replace('\r', ' ').replace(Regex("\\s+"), " ").trim()
         if (clean.isEmpty()) return null
-        if (clean.lowercase(Locale.ROOT) in IGNORED_TICKER_PHRASES) return null
+        val lower = clean.lowercase(Locale.ROOT)
+        if (lower in IGNORED_TICKER_PHRASES) return null
+        if (IGNORED_STATUS_SUBSTRINGS.any { it in clean }) return null
         return clean
     }
+
+    private val IGNORED_STATUS_SUBSTRINGS = listOf(
+        "正在运行",
+        "后台运行",
+        "运行中",
+        "点击返回",
+        "点击打开",
+        "点击进入",
+        "点击查看",
+    )
 
     private fun extractNotificationLargeBitmap(context: Context, notification: Notification): Bitmap? {
         runCatching {
