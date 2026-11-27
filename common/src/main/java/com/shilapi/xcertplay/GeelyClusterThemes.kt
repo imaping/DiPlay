@@ -238,10 +238,10 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         if (title.isEmpty()) {
             val parts = listOf(fallbackTime, fallbackFuel).filter { it.isNotBlank() }
             if (parts.isEmpty()) return false
-            textPaint.typeface = sansMedium
+            textPaint.typeface = if (useLightPalette) sansBold else sansMedium
             textPaint.textSize = 21f
             textPaint.textAlign = Paint.Align.CENTER
-            textPaint.color = if (useLightPalette) Color.rgb(36, 44, 54) else Color.argb(232, 232, 238, 246)
+            textPaint.color = if (useLightPalette) Color.rgb(18, 24, 34) else Color.argb(232, 232, 238, 246)
             if (!useLightPalette) {
                 textPaint.setShadowLayer(4f, 0f, 1.5f, Color.argb(150, 0, 0, 0))
             }
@@ -253,10 +253,10 @@ internal class GeelyUltraThemeRenderer(context: Context) {
             return false
         }
 
-        val textColor = if (useLightPalette) Color.rgb(24, 32, 42) else Color.argb(248, 248, 250, 253)
+        val textColor = if (useLightPalette) Color.rgb(10, 15, 24) else Color.argb(248, 248, 250, 253)
         val eqColor = if (useLightPalette) accentColor else withAlpha(accentColor, 245)
 
-        textPaint.typeface = sansMedium
+        textPaint.typeface = if (useLightPalette) sansBold else sansMedium
         textPaint.textSize = 24f
         textPaint.textAlign = Paint.Align.LEFT
         val displayTitle = ellipsize(title, textPaint, 460f)
