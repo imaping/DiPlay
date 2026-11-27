@@ -938,8 +938,10 @@ internal class GeelyClusterSettingsPanel(
                 compact = true,
                 heightDp = GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP,
             ) { mode ->
+                val prevMode = config.centerMode
                 config = config.copy(centerMode = mode)
                 onConfigUpdated()
+                GeelyClusterEnhancer.onCenterModeChangedByUser(activity, prevMode, mode)
                 if (selectedTab == 1) rebuildTabContent()
             },
         )
@@ -1355,12 +1357,13 @@ internal class GeelyClusterSettingsPanel(
             ) { sec ->
                 config = config.copy(navAutoReturnSeconds = sec)
                 onConfigUpdated()
+                GeelyClusterEnhancer.onCenterModeChangedByUser(activity, null, config.centerMode)
                 rebuildTabContent()
             },
             matchWrap(bottomMargin = dp(6)),
         )
         card.addView(
-            createHintText("导航进行中切换至「本次行程 / 胎压胎温 / 综合车况」时，无操作达到设定时间后自动切回导航地图（再次切页会重新计时；非导航状态不自动返回）。"),
+            createHintText("主驾仪表存在地图/导航投射（CarPlay 或车机导航）时，切看「本次行程 / 胎压胎温 / 综合车况」无操作达到设定时间后自动切回导航地图（再次切页会重新计时；无地图投射时不自动返回）。"),
             matchWrap(bottomMargin = dp(8)),
         )
 
@@ -1875,8 +1878,10 @@ internal class GeelyClusterSettingsPanel(
                 compact = false,
                 heightDp = GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP,
             ) { mode ->
+                val prevMode = config.centerMode
                 config = config.copy(centerMode = mode)
                 onConfigUpdated()
+                GeelyClusterEnhancer.onCenterModeChangedByUser(activity, prevMode, mode)
                 rebuildTabContent()
             },
             matchWrap(bottomMargin = dp(10)),
