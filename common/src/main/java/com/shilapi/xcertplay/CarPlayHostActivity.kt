@@ -932,14 +932,6 @@ open class CarPlayHostActivity : ComponentActivity() {
         loadPersistedSettings()
         locationPermissionAvailable = hasFineLocationPermission()
         setContentView(buildContentView())
-        GeelyAmapOverviewController.attachHost(
-            context = this,
-            touchSender = { contacts -> controller?.sendTouch(contacts) == true },
-            menuOpenProvider = { menuOpen },
-            mainStreamActiveProvider = { SCREEN_TYPE_MAIN in activeScreenStreamTypes },
-            clusterActiveProvider = { SCREEN_TYPE_ALT in activeScreenStreamTypes || clusterPresentation != null || clusterLayers.isNotEmpty() },
-            log = ::appendLog,
-        )
         applyFullscreenMode()
         onBackPressedDispatcher.addCallback(
             this,
@@ -1258,7 +1250,6 @@ open class CarPlayHostActivity : ComponentActivity() {
         WheelKeyServiceReset.cancelPendingRestart()
         WheelKeyService.restoreIfNeeded(this)
         hostAppearanceResumed = true
-        GeelyAmapOverviewController.onHostResumed()
         updateCallPopupGuard()
         val savedNightMode = AirPlayPersistence.loadCarPlayNightMode(this)
         val savedThreshold = AirPlayPersistence.loadAmbientLightThreshold(this)
@@ -1920,7 +1911,6 @@ open class CarPlayHostActivity : ComponentActivity() {
     override fun onPause() {
         cancelTemporarySystemBars()
         hostAppearanceResumed = false
-        GeelyAmapOverviewController.onHostPaused()
         updateCallPopupGuard()
         AppAppearanceRuntime.clearHost(this)
         nightModeController.pause()
@@ -2077,7 +2067,6 @@ open class CarPlayHostActivity : ComponentActivity() {
         }
         if (MapMirrors.onChanged === mirrorsChanged) MapMirrors.onChanged = null
         stopPlayerSettings?.invoke(); stopPlayerSettings = null
-        GeelyAmapOverviewController.detachHost()
         GeelyClusterEnhancer.detachHost()
         dismissClusterPresentation()
         mainHandler.removeCallbacks(applyDisplaySize)

@@ -43,7 +43,6 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.shilapi.xcertplay.host.R
 import com.shilapi.xcertplay.settings.SettingsTheme
 import com.shilapi.xcertplay.settings.SettingsWidgets
-import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -871,7 +870,6 @@ internal class GeelyClusterSettingsPanel(
                 }
                 2 -> {
                     addNavigationGuidanceCard(container)
-                    addAmapOverviewCard(container)
                     addCalibrationCard(container)
                 }
                 3 -> {
@@ -890,7 +888,6 @@ internal class GeelyClusterSettingsPanel(
                 }
                 1 -> {
                     addNavigationGuidanceCard(container)
-                    addAmapOverviewCard(container)
                     addCalibrationCard(container)
                 }
                 2 -> {
@@ -1445,7 +1442,7 @@ internal class GeelyClusterSettingsPanel(
     }
 
     // -------------------------------------------------------------------------
-    // Tab 1 (Studio Tab 2): 导航与 HUD (Unified Switches, AMap Overview, Calibration)
+    // Tab 1 (Studio Tab 2): 导航与 HUD (Unified Switches, Calibration)
     // -------------------------------------------------------------------------
 
     private fun addNavigationGuidanceCard(parent: LinearLayout) {
@@ -1490,42 +1487,6 @@ internal class GeelyClusterSettingsPanel(
         ) { checked ->
             config = config.copy(laneEnabled = checked)
             onConfigUpdated()
-        }
-
-        parent.addView(card, matchWrap(bottomMargin = dp(GeelyUiDimens.BLOCK_GAP_DP)))
-    }
-
-    private fun addAmapOverviewCard(parent: LinearLayout) {
-        val card = createSurfaceCard()
-        card.addView(createCardTitle("高德地图双屏联动"), matchWrap(bottomMargin = dp(6)))
-
-        val amapCfg = GeelyAmapOverviewPrefs.load(activity)
-        addFlatSwitchRow(
-            container = card,
-            title = "开始导航自动切中控「全览」",
-            subtitle = "高德开始导航后自动点击中控全览视角，使主驾仪表默认展示 3D 车道级导航。",
-            checked = amapCfg.autoOverviewOnNavStart,
-        ) { checked ->
-            GeelyAmapOverviewPrefs.save(activity, amapCfg.copy(autoOverviewOnNavStart = checked))
-            rebuildTabContent()
-        }
-
-        if (amapCfg.autoOverviewOnNavStart) {
-            card.addView(createSubLabel("自动切换延迟"), matchWrap(topMargin = dp(8), bottomMargin = dp(6)))
-            val options = GeelyAmapOverviewConfig.DELAY_PRESETS_MS.map { delayMs ->
-                val sec = String.format(Locale.US, "%.1f 秒", delayMs / 1000f)
-                delayMs to if (delayMs == GeelyAmapOverviewConfig.DEFAULT_AUTO_DELAY_MS) "$sec · 推荐" else sec
-            }
-            card.addView(
-                createSegmentedRow(
-                    options = options,
-                    selected = amapCfg.autoOverviewDelayMs,
-                    heightDp = GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP,
-                ) { delayMs ->
-                    GeelyAmapOverviewPrefs.save(activity, amapCfg.copy(autoOverviewDelayMs = delayMs))
-                    rebuildTabContent()
-                },
-            )
         }
 
         parent.addView(card, matchWrap(bottomMargin = dp(GeelyUiDimens.BLOCK_GAP_DP)))

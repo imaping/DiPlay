@@ -6,7 +6,7 @@
 
 > **BYD support scope:** These projects focus on BYD cars. They may work on other brands, but other brands are unsupported and there are no plans to add support or fix brand-specific incompatibilities.
 
-> **Fork extensions:** This fork adds Geely / ECARX (KX11) cluster themes, self-drawn W-HUD/cards, steering-wheel keys, fused GPS + wheel-speed location, native music sync, AMap auto-overview, and Cloudflare R2 diagnostic upload. See [Custom features (简体中文)](docs/CUSTOM_FEATURES.md).
+> **Fork extensions:** This fork adds Geely / ECARX (KX11) cluster themes, self-drawn W-HUD/cards, steering-wheel keys, fused GPS + wheel-speed location, native music sync, and Cloudflare R2 diagnostic upload. See [Custom features (简体中文)](docs/CUSTOM_FEATURES.md).
 
 [Download & website](https://shihabal3amri.github.io/DiPlay/) · [Release](https://github.com/shihabal3amri/DiPlay/releases/tag/v0.2.22) · [Report a problem](https://github.com/shihabal3amri/DiPlay/issues/new/choose)
 

@@ -17,10 +17,9 @@
 | [5. 车机原生音乐与实时歌词同步](#5-车机原生音乐与实时歌词仪表同步) | 未连 CarPlay 时在常驻仪表展示网易云/QQ 音乐/蓝牙音乐封面与实时歌词 | 吉利 / ECARX 车机 | **设置 → 吉利设置 → 权限与兼容** |
 | [6. 原车昼夜信号权威同步](#6-原车信号驱动的权威昼夜模式同步) | 读取 ECARX 大灯/主题昼夜信号，联动 CarPlay、仪表主题与自绘导航卡 | 吉利 / ECARX 车机 | 自动生效（仪表支持自动/深色/浅色切换） |
 | [7. 自绘 W-HUD 与仪表导航卡片](#7-吉利自绘-w-hud经典仪表卡片与全屏导航卡片) | 独立悬浮窗自绘 W-HUD、经典仪表卡、全屏导航卡、车道提示，支持像素微调与实车预览 | 吉利 `1920×1080` / `1920×720` 复合仪表 | **设置 → 吉利设置 → 导航卡片 / 抬头显示 (HUD) / 效果预览** |
-| [8. 高德导航自动切中控全览](#8-高德导航开始自动切中控全览) | 高德开始导航后自动点击中控「全览」，使主驾仪表默认显示 3D 车道级导航 | 吉利 / ECARX 车机 | **设置 → 吉利设置 → 导航卡片** |
-| [9. 独立「吉利设置」与全屏预览面板](#9-独立吉利设置页面与全屏配置预览面板) | 独立设置分类、5 分页配置、宽屏双栏全屏弹窗与 `1920×1080` 实时缩略预览 | 通用 / 吉利车机 | **设置 → 吉利设置** |
-| [10. 诊断报告一键上传 Cloudflare R2](#10-诊断报告一键上传至自建-cloudflare-r2) | Gzip 压缩后 `PUT` 上传至自建 Worker + R2，绕开无外网 CarPlay 热点 | 全部机型 | **设置 → 诊断 → 上传诊断报告到 R2** |
-| [11. 车机高分图标与低冲突同步规范](#11-其他定制与低冲突上游同步架构) | `drawable-nodpi` 清晰车机桌面图标、512px 应用内图标、低冲突架构规范 | 全部机型 | 自动生效 |
+| [8. 独立「吉利设置」与全屏预览面板](#8-独立吉利设置页面与全屏配置预览面板) | 独立设置分类、5 分页配置、宽屏双栏全屏弹窗与 `1920×1080` 实时缩略预览 | 通用 / 吉利车机 | **设置 → 吉利设置** |
+| [9. 诊断报告一键上传 Cloudflare R2](#9-诊断报告一键上传至自建-cloudflare-r2) | Gzip 压缩后 `PUT` 上传至自建 Worker + R2，绕开无外网 CarPlay 热点 | 全部机型 | **设置 → 诊断 → 上传诊断报告到 R2** |
+| [10. 车机高分图标与低冲突同步规范](#10-其他定制与低冲突上游同步架构) | `drawable-nodpi` 清晰车机桌面图标、512px 应用内图标、低冲突架构规范 | 全部机型 | 自动生效 |
 
 ---
 
@@ -166,26 +165,14 @@ KX11 方向盘按键经由 `ECarXCarHardKeyService` → `com.geely.inputservice.
 
 ---
 
-## 8. 高德导航开始自动切中控全览
-
-实现文件：`GeelyAmapOverviewController.kt`、`CarPlayGlance.kt`
-
-高德地图在 CarPlay 双屏模式下，当中控屏切至「全览」视图时，会将 3D 车道级导航移至主驾仪表盘。本功能可自动完成该切换：
-
-- **自动识别导航启动**：通过 `CarPlayGlance.routeFrameListener` 订阅 iAP2 `0x5201` 路由引导帧，解析路线激活状态与导航来源（仅对高德或未知来源触发，自动跳过百度、腾讯、Apple 地图、Google Maps、Waze）。
-- **自动触摸注入**：导航开始并经过可配置延迟（预设 `1.5s / 2.5s / 3.5s / 5.0s`，默认 `2.5s`）后，自动向中控 CarPlay 右上角「全览」位置（归一化坐标 `90%, 10%`）发送一次按下/抬起触摸事件。
-- **安全拦截条件**：仅在 CarPlay 处于前台、侧边菜单未打开、主屏与仪表视频流均处于激活状态且当前无通话时执行，避免误触其他界面。
-
----
-
-## 9. 独立「吉利设置」页面与全屏配置预览面板
+## 8. 独立「吉利设置」页面与全屏配置预览面板
 
 实现文件：`DiPlayActivity.kt`、`GeelyClusterEnhancer.kt`、`strings_geely.xml`
 
 - 在 DiPlay 设置中新增独立的 **吉利设置（Geely）** 分类（无需混杂在「高级」设置中）。
 - 页面内嵌 5 个分页标签，所有修改实时持久化并立即刷新仪表显示：
   1. **仪表显示**：5 套主题单选、启动加载主题、左右圆盘开关、配色模式、昼夜模式、底部栏、专辑封面、中央显示模式、方向盘切换按键学习与触发方式、地图主题遮罩。
-  2. **导航卡片**：全屏导航卡/经典仪表卡/车道提示开关、区域坐标微调、高德导航自动切全览开关与延迟预设。
+  2. **导航卡片**：全屏导航卡/经典仪表卡/车道提示开关与区域坐标微调。
   3. **抬头显示 (HUD)**：W-HUD 开关、车道提示开关、W-HUD 裁剪源区域微调。
   4. **效果预览**：内置 `1920×1080` 等比交互预览画布（同步显示上下分区线与虚线裁剪框），支持一键切换主题/中央视图/昼夜/导航与待机场景、手动测试切全屏（Mode 3）/回经典（Mode 1），以及开启实车模拟预览。
   5. **权限与兼容**：快捷管理悬浮窗权限（`TYPE_APPLICATION_OVERLAY`）、车机通知使用权（本地音乐与歌词读取）及手动选择仪表副屏 Display ID。
@@ -193,7 +180,7 @@ KX11 方向盘按键经由 `ECarXCarHardKeyService` → `com.geely.inputservice.
 
 ---
 
-## 10. 诊断报告一键上传至自建 Cloudflare R2
+## 9. 诊断报告一键上传至自建 Cloudflare R2
 
 实现文件：`DiagnosticR2Uploader.kt`、`DiagnosticR2UploadUi.kt`、`common/build.gradle.kts`、`strings_r2_upload.xml`
 
@@ -208,27 +195,25 @@ KX11 方向盘按键经由 `ECarXCarHardKeyService` → `com.geely.inputservice.
 
 ---
 
-## 11. 其他定制与低冲突上游同步架构
+## 10. 其他定制与低冲突上游同步架构
 
-### 11.1 车机启动图标与应用内图标优化
+### 10.1 车机启动图标与应用内图标优化
 - 新增 `mobile/src/main/res/drawable-nodpi/ic_launcher_geely.png` 并将其设为 `android:icon` 与 `android:roundIcon`，解决 KX11 等车机桌面忽略密度目录导致图标过小或模糊的问题。
 - 更新 `common/src/main/res/drawable/ic_carplay.png` 为高清 512×512 方形 DiPlay 标识，改善应用内头部及悬浮气泡显示清晰度。
 
-### 11.2 低冲突上游同步设计（开发者参考）
+### 10.2 低冲突上游同步设计（开发者参考）
 为确保后续持续 `merge` / `rebase` 上游 `shihabal3amri/DiPlay` 时尽量少冲突，所有定制逻辑均集中在新增的独立扩展文件中，对上游核心文件仅保留极简接线点：
 
 - **新增独立模块**（`common/src/main/java/com/shilapi/xcertplay/`）：
   - `EcarxKx11HeadUnit.kt`、`EcarxLocationEnhancer.kt`、`EcarxKx11WheelKeys.kt`
   - `GeelyClusterConfig.kt`、`GeelyEcarxHardware.kt`、`GeelyEcarxDayNightReader.kt`、`GeelyVehicleMediaObserver.kt`
   - `GeelyFakeUltraView.kt`、`GeelyClusterThemes.kt`、`GeelyClusterExtraThemes.kt`、`GeelySelfDrawOverlay.kt`、`GeelyClusterThemeWindow.kt`、`GeelyClusterEnhancer.kt`
-  - `GeelyAmapOverviewController.kt`
   - `DiagnosticR2Uploader.kt`、`DiagnosticR2UploadUi.kt`
 - **上游文件最小化接入点**：
   - `AirPlayPersistence.kt`：4 处 KX11 默认值判断
-  - `CarPlayHostActivity.kt`：挂载 `GeelyClusterEnhancer`、`GeelyAmapOverviewController`、`GeelyEcarxDayNightReader` 与 `EcarxLocationEnhancer`
+  - `CarPlayHostActivity.kt`：挂载 `GeelyClusterEnhancer`、`GeelyEcarxDayNightReader` 与 `EcarxLocationEnhancer`
   - `ClusterMapPresentation.kt`：副屏匹配与 `GeelyClusterEnhancer` 生命周期钩子
   - `DiPlayActivity.kt`：新增 `SettingsCategory.GEELY` 入口、`DiagnosticR2UploadUi.attach`、KX11 方向盘按键学习接入与启动主题回调
   - `CarPlayMediaKeys.kt` / `WheelKeyService.kt`：KX11 方向盘按键启停与配置变更通知
   - `DiPlaySessionService.kt`：吉利/ECARX 车机 `onTaskRemoved` 会话保活与销毁回调
-  - `CarPlayGlance.kt`：暴露 `routeFrameListener` 供高德全览控制器只读订阅 `0x5201` 帧
   - `common/build.gradle.kts` / `AndroidManifest.xml`：R2 可选 `BuildConfig` 字段与两个吉利后台/通知监听服务声明

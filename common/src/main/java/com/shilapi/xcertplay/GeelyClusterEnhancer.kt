@@ -511,7 +511,6 @@ internal object GeelyClusterEnhancer {
         isFullScreenPresentationActive = presentationShowing
 
         val routeActive = guidance != null
-        GeelyAmapOverviewController.onTurnGuidanceUpdated(routeActive)
         currentFakeUltraView?.apply {
             carPlayConnected = presentationShowing
             this.routeActive = presentationShowing && routeActive
@@ -1055,7 +1054,6 @@ internal object GeelyClusterEnhancer {
             searchIndexSink.add(SETTINGS_CARD_TITLE)
             searchIndexSink.add("机甲仪表主题风格")
             searchIndexSink.add("W-HUD 抬头显示引导")
-            searchIndexSink.add("高德地图双屏联动")
             searchIndexSink.add("方向盘视图循环切换键")
             searchIndexSink.add("仪表副屏输出")
             return
