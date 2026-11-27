@@ -14,6 +14,7 @@ class BootReceiver : BroadcastReceiver() {
         PhoneAudioRoute.attach(context)
         val launchEnabled = AirPlayPersistence.loadAutoStartOnBoot(context)
         StartupDiagnosticSnapshot.received(context, launchEnabled)
+        if (GeelyClusterBootLauncher.onBootCompleted(context, launchEnabled)) return
         if (!launchEnabled) return
 
         // Shaped like the launcher icon's intent: a USB authenticator or iPhone plugged in can open CarPlay

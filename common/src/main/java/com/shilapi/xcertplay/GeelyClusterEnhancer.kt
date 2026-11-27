@@ -62,6 +62,7 @@ internal object GeelyClusterEnhancer {
     private var presentationNightMode: Boolean? = null
     private var wasInPhoneCall: Boolean = false
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val bootRetry = GeelyClusterBootRetryController(mainHandler)
     private val callRecoveryTick = object : Runnable {
         override fun run() {
             if (!isFullScreenPresentationActive) {
@@ -473,6 +474,61 @@ internal object GeelyClusterEnhancer {
     }
 
     /**
+     * Called from [GeelyClusterKeepAliveService.onStartCommand] after `ACTION_BOOT_COMPLETED`
+     * to bring up the persistent cluster theme silently in the background without opening
+     * `DiPlayActivity`. Retries until the instrument display and DIM service finish booting.
+     */
+    fun onBootKeepAliveStarted(context: Context) {
+        val app = context.applicationContext
+        hostAppContext = app
+        GeelyClusterProjection.releaseStale(app)
+        GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
+        ensureHostNightObserver()
+        ensureVehicleDayNightObserver(app)
+        ensureVehicleMediaObserver(app)
+        runOnMain {
+            bootRetry.start(
+                context = app,
+                shouldContinue = {
+                    val cfg = GeelyClusterPrefs.load(app)
+                    GeelyVehicleDetector.isGeelyOrEcarx(app) &&
+                        cfg.launchThemeOnStart &&
+                        cfg.hasAnyClusterVisual &&
+                        !isFullScreenPresentationActive
+                },
+                tryAttach = {
+                    syncPersistentThemeWindow(
+                        appContext = app,
+                        requestFullScreen = true,
+                        keepAliveWhenDisplayPending = true,
+                    )
+                    isPersistentThemeActive()
+                },
+                ensureDimFullScreen = {
+                    if (!isPersistentThemeActive()) {
+                        false
+                    } else {
+                        val controller = ensureDimController(app)
+                        val mode = controller.getNaviMode()
+                        if (mode == GeelyDimMenuController.MODE_FULLSCREEN_MAP) {
+                            true
+                        } else {
+                            controller.forceReenterFullScreenMap("boot-retry")
+                            if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(true, app)
+                            false
+                        }
+                    }
+                },
+                onGiveUp = {
+                    if (!isPersistentThemeActive()) {
+                        shutdownPersistentTheme(app, handBackIfIdle = false)
+                    }
+                },
+            )
+        }
+    }
+
+    /**
      * Called from [GeelyClusterKeepAliveService.onTaskRemoved] on Geely / ECARX head units where
      * `GeelyRecent` removes background activity tasks after ~30 s while the process remains alive.
      * Keeps the persistent cluster overlay attached instead of handing the cluster back to OEM.
@@ -752,6 +808,7 @@ internal object GeelyClusterEnhancer {
             return
         }
         isFullScreenPresentationActive = true
+        bootRetry.cancel()
         stopNativeMapObserver()
         GeelyClusterPrefs.prefs(context).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
@@ -981,7 +1038,11 @@ internal object GeelyClusterEnhancer {
         }
     }
 
-    private fun syncPersistentThemeWindow(appContext: Context, requestFullScreen: Boolean) {
+    private fun syncPersistentThemeWindow(
+        appContext: Context,
+        requestFullScreen: Boolean,
+        keepAliveWhenDisplayPending: Boolean = false,
+    ) {
         if (!GeelyVehicleDetector.isGeelyOrEcarx(appContext)) {
             shutdownPersistentTheme(appContext, handBackIfIdle = false)
             return
@@ -993,7 +1054,11 @@ internal object GeelyClusterEnhancer {
         }
         val targetDisplay = GeelyVehicleDetector.findClusterDisplay(appContext)
         if (targetDisplay == null) {
-            shutdownPersistentTheme(appContext, handBackIfIdle = false)
+            if (keepAliveWhenDisplayPending) {
+                closePersistentThemeWindow()
+            } else {
+                shutdownPersistentTheme(appContext, handBackIfIdle = false)
+            }
             return
         }
         val effectiveNight = resolveEffectiveNightMode(cfg, appContext)
@@ -1063,6 +1128,7 @@ internal object GeelyClusterEnhancer {
     }
 
     private fun shutdownPersistentTheme(appContext: Context, handBackIfIdle: Boolean) {
+        bootRetry.cancel()
         val wasAttached = isPersistentThemeActive()
         stopVehicleMediaObserver()
         stopNativeMapObserver()

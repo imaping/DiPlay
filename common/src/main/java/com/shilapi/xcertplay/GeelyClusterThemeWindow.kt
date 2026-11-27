@@ -100,10 +100,7 @@ class GeelyClusterKeepAliveService : Service() {
         }
 
         val cfg = GeelyClusterPrefs.load(applicationContext)
-        if (!cfg.launchThemeOnStart || !cfg.hasAnyClusterVisual) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        val shouldRun = cfg.launchThemeOnStart && cfg.hasAnyClusterVisual
 
         val openIntent = Intent(this, DiPlayActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -163,9 +160,16 @@ class GeelyClusterKeepAliveService : Service() {
             runCatching { startForeground(NOTIFICATION_ID, notification) }
         }
 
-        // Re-attach the cluster theme window if the service was restarted via START_STICKY
-        // after a process kill or if the overlay was detached while running in the background.
-        if (!GeelyClusterEnhancer.isPersistentThemeActive()) {
+        if (!shouldRun) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        if (intent?.action == ACTION_BOOT_LAUNCH) {
+            GeelyClusterEnhancer.onBootKeepAliveStarted(applicationContext)
+        } else if (!GeelyClusterEnhancer.isPersistentThemeActive()) {
+            // Re-attach the cluster theme window if the service was restarted via START_STICKY
+            // after a process kill or if the overlay was detached while running in the background.
             GeelyClusterEnhancer.onKeepAliveServiceStarted(applicationContext)
         }
         return START_STICKY
@@ -191,10 +195,20 @@ class GeelyClusterKeepAliveService : Service() {
         private const val REQ_OPEN = 42071
         private const val REQ_STOP = 42072
         const val ACTION_STOP = "com.shilapi.xcertplay.GEELY_CLUSTER_THEME_STOP"
+        const val ACTION_BOOT_LAUNCH = "com.shilapi.xcertplay.GEELY_CLUSTER_THEME_BOOT_LAUNCH"
 
         fun start(context: Context) {
             val app = context.applicationContext
             val intent = Intent(app, GeelyClusterKeepAliveService::class.java)
+            runCatching {
+                ContextCompat.startForegroundService(app, intent)
+            }
+        }
+
+        fun startForBoot(context: Context) {
+            val app = context.applicationContext
+            val intent = Intent(app, GeelyClusterKeepAliveService::class.java)
+                .setAction(ACTION_BOOT_LAUNCH)
             runCatching {
                 ContextCompat.startForegroundService(app, intent)
             }

@@ -1169,8 +1169,8 @@ internal class GeelyClusterSettingsPanel(
         // Launch theme on start
         addFlatSwitchRow(
             container = card,
-            title = "启动 DiPlay 时自动加载常驻仪表",
-            subtitle = "打开应用即显示双圆盘与待机时钟；未连接或断开 CarPlay 后主题保持显示，自动切回时钟或车机专辑封面。",
+            title = "开机与启动时自动加载常驻仪表",
+            subtitle = "车机开机后后台静默加载双圆盘与待机时钟，不弹出软件界面（除非同时开启「打开时自动连接 CarPlay」）；纯车机使用或断开 CarPlay 后保持显示。",
             checked = config.launchThemeOnStart,
         ) { checked ->
             config = config.copy(launchThemeOnStart = checked)
