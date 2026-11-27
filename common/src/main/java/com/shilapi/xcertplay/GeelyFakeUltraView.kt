@@ -1069,6 +1069,31 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
 
     private val blurPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val albumBgRect = RectF(0f, 0f, 1920f, 720f)
+    private val albumDayVignetteShader = RadialGradient(
+        960f,
+        340f,
+        980f,
+        intArrayOf(
+            Color.argb(24, 242, 245, 249),
+            Color.argb(88, 238, 242, 246),
+            Color.argb(175, 238, 242, 246),
+        ),
+        floatArrayOf(0f, 0.56f, 1f),
+        Shader.TileMode.CLAMP,
+    )
+    private val albumNightVignetteShader = RadialGradient(
+        960f,
+        340f,
+        980f,
+        intArrayOf(
+            Color.argb(42, 6, 9, 16),
+            Color.argb(96, 6, 9, 16),
+            Color.argb(170, 6, 9, 16),
+        ),
+        floatArrayOf(0f, 0.58f, 1f),
+        Shader.TileMode.CLAMP,
+    )
     private val centerCoverClip = Path()
     private val centerCoverRect = RectF()
     private val timeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -1248,18 +1273,15 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
         }
         val showingCenterMap = effectiveDisplayMode == GeelyClusterCenterMode.MAP
-        val showingCenterAlbum = effectiveDisplayMode == GeelyClusterCenterMode.ALBUM
         val showingCenterClock = effectiveDisplayMode == GeelyClusterCenterMode.CLOCK
 
         when (effectiveDisplayMode) {
             GeelyClusterCenterMode.ALBUM -> {
-                if (drawBlurredAlbumBackground(canvas)) {
+                val useLightPalette = themeStyle.supportsLightMode && !nightMode
+                if (drawBlurredAlbumBackground(canvas, useLightPalette)) {
                     needsNextFrame = true
                 }
-                if (config.mapVignetteEnabled) {
-                    ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = true)
-                }
-                drawCenteredAlbumCover(canvas, top = if (effectiveRouteActive) 240f else 172f)
+                drawCenteredAlbumCover(canvas, top = if (effectiveRouteActive) 240f else 172f, lightMode = useLightPalette)
             }
             GeelyClusterCenterMode.MAP -> {
                 if (config.mapVignetteEnabled) {
@@ -1341,7 +1363,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                         nowMs = SystemClock.uptimeMillis(),
                         fallbackTime = timeText,
                         fallbackFuel = fallbackFuel,
-                        overDarkBackdrop = showingCenterAlbum,
                     )
                 ) {
                     needsNextFrame = true
@@ -1355,29 +1376,38 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         }
     }
 
-    private fun drawBlurredAlbumBackground(canvas: Canvas): Boolean {
+    private fun drawBlurredAlbumBackground(canvas: Canvas, lightMode: Boolean): Boolean {
+        // 1. Opaque day/night base layer so underlying map road labels never bleed through
+        scrimPaint.shader = null
+        scrimPaint.color = if (lightMode) Color.rgb(238, 242, 246) else Color.rgb(8, 11, 18)
+        canvas.drawRect(albumBgRect, scrimPaint)
+
         val curBlur = blurredArtwork
         val prevBlur = prevBlurredArtwork
         if (curBlur == null && prevBlur == null) return false
 
         val nowUptime = SystemClock.uptimeMillis()
         val progress = if (previewMode) 1f else ((nowUptime - artworkTransitionStartMs).toFloat() / 420f).coerceIn(0f, 1f)
-        val dst = RectF(0f, 0f, 1920f, 720f)
 
+        // 2. Soft frosted-glass blurred artwork tint (bright/airy in day, rich/calm at night)
+        val maxBlurAlpha = if (lightMode) 72f else 128f
         if (prevBlur != null && !prevBlur.isRecycled && progress < 1f) {
-            blurPaint.alpha = ((1f - progress) * 210f).roundToInt().coerceIn(0, 255)
-            canvas.drawBitmap(prevBlur, null, dst, blurPaint)
+            blurPaint.alpha = ((1f - progress) * maxBlurAlpha).roundToInt().coerceIn(0, 255)
+            canvas.drawBitmap(prevBlur, null, albumBgRect, blurPaint)
         }
         if (curBlur != null && !curBlur.isRecycled) {
-            blurPaint.alpha = (progress * 210f).roundToInt().coerceIn(0, 255)
-            canvas.drawBitmap(curBlur, null, dst, blurPaint)
+            blurPaint.alpha = (progress * maxBlurAlpha).roundToInt().coerceIn(0, 255)
+            canvas.drawBitmap(curBlur, null, albumBgRect, blurPaint)
         }
-        scrimPaint.color = if (nightMode) Color.argb(105, 5, 8, 14) else Color.argb(80, 10, 16, 24)
-        canvas.drawRect(dst, scrimPaint)
+
+        // 3. Radial edge blend so album color feathers seamlessly into the side dials and OEM chrome
+        scrimPaint.shader = if (lightMode) albumDayVignetteShader else albumNightVignetteShader
+        canvas.drawRect(albumBgRect, scrimPaint)
+        scrimPaint.shader = null
         return progress < 1f
     }
 
-    private fun drawCenteredAlbumCover(canvas: Canvas, top: Float = 172f) {
+    private fun drawCenteredAlbumCover(canvas: Canvas, top: Float = 172f, lightMode: Boolean = false) {
         val art = rawArtwork ?: return
         if (art.isRecycled) return
         val size = 280f
@@ -1385,7 +1415,8 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         centerCoverRect.set(left, top, left + size, top + size)
 
         // Subtle outer shadow card
-        scrimPaint.color = Color.argb(95, 0, 0, 0)
+        scrimPaint.shader = null
+        scrimPaint.color = if (lightMode) Color.argb(52, 15, 23, 42) else Color.argb(105, 0, 0, 0)
         canvas.drawRoundRect(
             left - 4f,
             top + 6f,
