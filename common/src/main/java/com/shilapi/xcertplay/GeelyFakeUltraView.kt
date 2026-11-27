@@ -1050,6 +1050,14 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
         }
 
+    var nativeMapProjected: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
     private var rawArtwork: Bitmap? = null
     private var blurredArtwork: Bitmap? = null
     private var prevBlurredArtwork: Bitmap? = null
@@ -1255,20 +1263,27 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         val activeSongPlaying = !activeSong.isNullOrBlank() && (nowPlayingActive || previewMode)
 
         // 1. Background / Vignette / Album / Standby Clock Backdrop (supports AUTO / MAP / ALBUM / CLOCK)
-        //    MAP is always allowed even when CarPlay is disconnected so a native head-unit map
-        //    projected onto the cluster display can show through cleanly between the two dials.
+        //    In pure head-unit mode (CarPlay disconnected), MAP is only allowed when a native
+        //    head-unit map presentation is actually detected on the cluster display so the center
+        //    never falls through to an empty black framebuffer.
         val hasAlbumArt = hasMediaFeed && rawArtwork != null && rawArtwork?.isRecycled == false
+        val hasNativeMap = !hasCarPlayFeed && nativeMapProjected
+        val hasMapSource = hasCarPlayFeed || hasNativeMap
         val effectiveDisplayMode = when (config.centerMode) {
-            GeelyClusterCenterMode.MAP -> GeelyClusterCenterMode.MAP
+            GeelyClusterCenterMode.MAP -> when {
+                hasMapSource -> GeelyClusterCenterMode.MAP
+                config.albumArtEnabled && hasAlbumArt -> GeelyClusterCenterMode.ALBUM
+                else -> GeelyClusterCenterMode.CLOCK
+            }
             GeelyClusterCenterMode.ALBUM -> when {
                 hasAlbumArt -> GeelyClusterCenterMode.ALBUM
-                effectiveRouteActive -> GeelyClusterCenterMode.MAP
+                effectiveRouteActive || hasNativeMap -> GeelyClusterCenterMode.MAP
                 else -> GeelyClusterCenterMode.CLOCK
             }
             GeelyClusterCenterMode.CLOCK -> GeelyClusterCenterMode.CLOCK
             GeelyClusterCenterMode.AUTO -> when {
-                !effectiveRouteActive && config.albumArtEnabled && hasAlbumArt -> GeelyClusterCenterMode.ALBUM
-                effectiveRouteActive -> GeelyClusterCenterMode.MAP
+                effectiveRouteActive || hasNativeMap -> GeelyClusterCenterMode.MAP
+                config.albumArtEnabled && hasAlbumArt -> GeelyClusterCenterMode.ALBUM
                 else -> GeelyClusterCenterMode.CLOCK
             }
         }

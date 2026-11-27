@@ -44,6 +44,8 @@ internal object GeelyClusterEnhancer {
     private var musicSubscription: (() -> Unit)? = null
     private var vehicleMediaSubscription: (() -> Unit)? = null
     private var lastVehicleMediaSnapshot: GeelyVehicleMediaSnapshot = GeelyVehicleMediaSnapshot()
+    private var nativeMapSubscription: (() -> Unit)? = null
+    private var nativeMapProjected: Boolean = false
     private var hostNightObserverRemoval: (() -> Unit)? = null
     private var vehicleDayNightRemoval: (() -> Unit)? = null
     private var carPlayNightSink: ((Boolean) -> Unit)? = null
@@ -207,6 +209,29 @@ internal object GeelyClusterEnhancer {
         currentFakeUltraView?.applyVehicleMedia(lastVehicleMediaSnapshot)
     }
 
+    private fun ensureNativeMapObserver(context: Context) {
+        val app = context.applicationContext
+        if (nativeMapSubscription != null) {
+            GeelyNativeClusterMapObserver.refreshNow()
+            return
+        }
+        nativeMapSubscription = GeelyNativeClusterMapObserver.observe(app, hostLogger) { projected ->
+            nativeMapProjected = projected
+            runOnMain { applyNativeMapState() }
+        }
+    }
+
+    private fun stopNativeMapObserver() {
+        nativeMapSubscription?.invoke()
+        nativeMapSubscription = null
+        nativeMapProjected = false
+        runOnMain { currentFakeUltraView?.nativeMapProjected = false }
+    }
+
+    private fun applyNativeMapState() {
+        currentFakeUltraView?.nativeMapProjected = !isFullScreenPresentationActive && nativeMapProjected
+    }
+
     private fun ensureHostNightObserver() {
         if (hostNightObserverRemoval != null) return
         hostNightObserverRemoval = AppAppearanceRuntime.observeHost { night ->
@@ -333,8 +358,10 @@ internal object GeelyClusterEnhancer {
             (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
         if (keepThemeAlive) {
             applyVehicleMediaIfStandby()
+            hostAppContext?.let(::ensureNativeMapObserver)
         } else {
             stopVehicleMediaObserver()
+            stopNativeMapObserver()
             hostNightObserverRemoval?.invoke()
             hostNightObserverRemoval = null
             vehicleDayNightRemoval?.invoke()
@@ -414,6 +441,7 @@ internal object GeelyClusterEnhancer {
         runOnMain {
             detachBackgroundTurnListener()
             stopVehicleMediaObserver()
+            stopNativeMapObserver()
             vehicleDayNightRemoval?.invoke()
             vehicleDayNightRemoval = null
             carPlayNightSink = null
@@ -646,6 +674,7 @@ internal object GeelyClusterEnhancer {
             return
         }
         isFullScreenPresentationActive = true
+        stopNativeMapObserver()
         GeelyClusterPrefs.prefs(context).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
         ensureVehicleDayNightObserver(context)
@@ -711,7 +740,9 @@ internal object GeelyClusterEnhancer {
             currentFakeUltraView?.clearCarPlayData()
             if (keepThemeAlive) {
                 applyVehicleMediaIfStandby()
+                hostAppContext?.let(::ensureNativeMapObserver)
             } else {
+                stopNativeMapObserver()
                 activeDimController?.restoreClassicCluster()
             }
         } else {
@@ -725,9 +756,13 @@ internal object GeelyClusterEnhancer {
                 invalidate()
             }
             if (!keepThemeAlive) {
+                stopNativeMapObserver()
                 activeDimController?.restoreClassicCluster()
-            } else if (!carPlayTrackActive) {
-                applyVehicleMediaIfStandby()
+            } else {
+                hostAppContext?.let(::ensureNativeMapObserver)
+                if (!carPlayTrackActive) {
+                    applyVehicleMediaIfStandby()
+                }
             }
         }
 
@@ -743,30 +778,40 @@ internal object GeelyClusterEnhancer {
     }
 
     /**
-     * Cycles the center display content between `MAP` (transparent center for CarPlay or native
-     * head-unit map projection), `ALBUM` (when album art is available), and `CLOCK` when triggered
-     * by the user's bound steering-wheel button (long press or double click).
+     * Cycles the center display content between `MAP` (only when CarPlay or a native head-unit
+     * map projection is active on the cluster display), `ALBUM` (when album art is available),
+     * and `CLOCK` when triggered by the user's bound steering-wheel button.
      */
     fun cycleCenterMode(context: Context): String {
         val app = context.applicationContext
         val cfg = GeelyClusterPrefs.load(app)
         val hasCarPlay = isFullScreenPresentationActive
+        val hasNativeMap = !hasCarPlay && nativeMapProjected
+        val hasMapSource = hasCarPlay || hasNativeMap
         val hasArtwork = currentFakeUltraView?.hasUsableArtwork() == true
         val hasMediaAlbum = hasArtwork && (hasCarPlay || carPlayHostAttached || lastVehicleMediaSnapshot.hasContent)
         val routeNow = hasCarPlay && latestGuidance != null
 
         val available = ArrayList<GeelyClusterCenterMode>(3)
-        available.add(GeelyClusterCenterMode.MAP)
+        if (hasMapSource) available.add(GeelyClusterCenterMode.MAP)
         if (hasMediaAlbum) available.add(GeelyClusterCenterMode.ALBUM)
         available.add(GeelyClusterCenterMode.CLOCK)
 
         val currentVisible = when (cfg.centerMode) {
-            GeelyClusterCenterMode.MAP -> GeelyClusterCenterMode.MAP
-            GeelyClusterCenterMode.ALBUM -> if (hasMediaAlbum) GeelyClusterCenterMode.ALBUM else GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.MAP -> when {
+                hasMapSource -> GeelyClusterCenterMode.MAP
+                cfg.albumArtEnabled && hasMediaAlbum -> GeelyClusterCenterMode.ALBUM
+                else -> GeelyClusterCenterMode.CLOCK
+            }
+            GeelyClusterCenterMode.ALBUM -> when {
+                hasMediaAlbum -> GeelyClusterCenterMode.ALBUM
+                routeNow || hasNativeMap -> GeelyClusterCenterMode.MAP
+                else -> GeelyClusterCenterMode.CLOCK
+            }
             GeelyClusterCenterMode.CLOCK -> GeelyClusterCenterMode.CLOCK
             GeelyClusterCenterMode.AUTO -> when {
-                !routeNow && cfg.albumArtEnabled && hasMediaAlbum -> GeelyClusterCenterMode.ALBUM
-                routeNow -> GeelyClusterCenterMode.MAP
+                routeNow || hasNativeMap -> GeelyClusterCenterMode.MAP
+                cfg.albumArtEnabled && hasMediaAlbum -> GeelyClusterCenterMode.ALBUM
                 else -> GeelyClusterCenterMode.CLOCK
             }
         }
@@ -775,6 +820,9 @@ internal object GeelyClusterEnhancer {
         val nextMode = available[(currentIdx + 1) % available.size]
         GeelyClusterPrefs.save(app, cfg.copy(centerMode = nextMode))
         refreshConfig(app)
+        if (!hasCarPlay) {
+            GeelyNativeClusterMapObserver.refreshNow()
+        }
         return nextMode.name
     }
 
@@ -861,11 +909,15 @@ internal object GeelyClusterEnhancer {
             currentWindow.display.displayId == targetDisplay.displayId
         ) {
             ensureVehicleMediaObserver(appContext)
+            if (!isFullScreenPresentationActive) {
+                ensureNativeMapObserver(appContext)
+            }
             currentWindow.view.apply {
                 config = cfg
                 nightMode = effectiveNight
                 carPlayConnected = isFullScreenPresentationActive
                 routeActive = isFullScreenPresentationActive && latestGuidance != null
+                this.nativeMapProjected = !isFullScreenPresentationActive && this@GeelyClusterEnhancer.nativeMapProjected
                 if (!isFullScreenPresentationActive) {
                     applyVehicleMedia(lastVehicleMediaSnapshot)
                 }
@@ -883,11 +935,15 @@ internal object GeelyClusterEnhancer {
         val newWindow = GeelyClusterThemeWindow(appContext, targetDisplay, hostLogger)
         if (newWindow.attach()) {
             ensureVehicleMediaObserver(appContext)
+            if (!isFullScreenPresentationActive) {
+                ensureNativeMapObserver(appContext)
+            }
             newWindow.view.apply {
                 config = cfg
                 nightMode = effectiveNight
                 carPlayConnected = isFullScreenPresentationActive
                 routeActive = isFullScreenPresentationActive && latestGuidance != null
+                this.nativeMapProjected = !isFullScreenPresentationActive && this@GeelyClusterEnhancer.nativeMapProjected
                 if (!isFullScreenPresentationActive) {
                     applyVehicleMedia(lastVehicleMediaSnapshot)
                 }
@@ -916,6 +972,7 @@ internal object GeelyClusterEnhancer {
     private fun shutdownPersistentTheme(appContext: Context, handBackIfIdle: Boolean) {
         val wasAttached = isPersistentThemeActive()
         stopVehicleMediaObserver()
+        stopNativeMapObserver()
         closePersistentThemeWindow()
         activeFakeUltraView?.visibility = View.VISIBLE
         GeelyClusterKeepAliveService.stop(appContext)
