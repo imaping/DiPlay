@@ -587,7 +587,10 @@ internal class GeelyClusterSettingsPanel(
     private val studioMode: Boolean = false,
     private val onStateChanged: () -> Unit = {},
 ) {
-    var config: GeelySelfDrawConfig = GeelyClusterPrefs.load(activity)
+    var config: GeelySelfDrawConfig = run {
+        EcarxKx11WheelKeys.ensureDefaultPresets(activity)
+        GeelyClusterPrefs.load(activity)
+    }
         private set
 
     var selectedTab: Int
@@ -614,7 +617,7 @@ internal class GeelyClusterSettingsPanel(
             GeelyClusterEnhancer.lastCalibrationArea = value
         }
 
-    private var learningKey: Boolean = false
+    private var learningTarget: EcarxKx11WheelKeys.ClusterLearnTarget? = null
     private var previewView: GeelyCompositePreviewView? = null
     private var studioHeaderSubtitle: TextView? = null
     private var inlineStatusRow: LinearLayout? = null
@@ -773,7 +776,7 @@ internal class GeelyClusterSettingsPanel(
     }
 
     fun cancelLearningState() {
-        learningKey = false
+        learningTarget = null
         EcarxKx11WheelKeys.cancelLearning()
     }
 
@@ -1346,8 +1349,345 @@ internal class GeelyClusterSettingsPanel(
             },
         )
 
-        card.addView(createSubLabel("导航中切看车况后自动返回地图"), matchWrap(bottomMargin = dp(6)))
-        card.addView(
+        addFlatSwitchRow(
+            container = card,
+            title = "胎压 / 胎温异常自动提醒",
+            subtitle = "即使当前仪表停留在导航地图、专辑或时钟页，检测到任一轮胎胎压或胎温异常时也会在仪表顶部弹出警示条。",
+            checked = config.tireAlertPopupEnabled,
+        ) { checked ->
+            config = config.copy(tireAlertPopupEnabled = checked)
+            onConfigUpdated()
+        }
+
+        card.addView(createHairline(), matchWrap(topMargin = dp(6), bottomMargin = dp(12)))
+
+        // Subcard 1: Primary center view wheel key (Map / Album / Clock)
+        val primaryKeyBox = createSubCard()
+        val learningPrimary = learningTarget == EcarxKx11WheelKeys.ClusterLearnTarget.PRIMARY
+        val primaryKeyHeader = LinearLayout(activity).apply {
+            orientation = if (isMediumScreen()) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val primaryKeyInfoCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        primaryKeyInfoCol.addView(
+            TextView(activity).apply {
+                text = "主视图切换键（地图 / 专辑 / 时钟）"
+                setTextColor(colors.primaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            },
+        )
+        primaryKeyInfoCol.addView(
+            TextView(activity).apply {
+                text = "当前绑定：${formatGeelyWheelKey(config.centerSwitchKeyCode)}"
+                setTextColor(if (config.centerSwitchKeyCode > 0) colors.accent else colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setPadding(0, dp(3), 0, 0)
+            },
+        )
+        primaryKeyHeader.addView(
+            primaryKeyInfoCol,
+            if (isMediumScreen()) {
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(10) }
+            } else {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { bottomMargin = dp(8) }
+            },
+        )
+
+        val primaryKeyBtnRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        val primaryLearnText = when {
+            learningPrimary -> "请按下方向盘按键…"
+            config.centerSwitchKeyCode > 0 -> "重新学习"
+            else -> "学习按键"
+        }
+        val primaryLearnBtn = if (learningPrimary) {
+            createPrimaryButton(primaryLearnText) {
+                cancelLearningState()
+                rebuildTabContent()
+            }
+        } else {
+            createActionButton(primaryLearnText, selected = config.centerSwitchKeyCode > 0) {
+                startWheelKeyLearning(EcarxKx11WheelKeys.ClusterLearnTarget.PRIMARY)
+            }
+        }
+        primaryKeyBtnRow.addView(
+            primaryLearnBtn,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP)),
+        )
+        if (config.centerSwitchKeyCode > 0) {
+            val clearBtn = createActionButton("清除") {
+                cancelLearningState()
+                config = config.copy(centerSwitchKeyCode = 0)
+                onConfigUpdated()
+                rebuildTabContent()
+            }
+            primaryKeyBtnRow.addView(
+                clearBtn,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP))
+                    .apply { marginStart = dp(8) },
+            )
+        }
+        primaryKeyHeader.addView(primaryKeyBtnRow)
+        primaryKeyBox.addView(primaryKeyHeader, matchWrap(bottomMargin = dp(10)))
+
+        val primaryTriggerRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        primaryTriggerRow.addView(
+            TextView(activity).apply {
+                text = "触发手势"
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        primaryTriggerRow.addView(
+            createSegmentedRow(
+                options = listOf(
+                    GeelyClusterSwitchTrigger.SINGLE_CLICK to "单击",
+                    GeelyClusterSwitchTrigger.LONG_PRESS to "长按",
+                    GeelyClusterSwitchTrigger.DOUBLE_CLICK to "双击",
+                ),
+                selected = config.centerSwitchTrigger,
+                heightDp = 38,
+            ) { trigger ->
+                val adjustedTelemetryTrigger = if (config.sharesTelemetryKeyWithPrimary && config.telemetrySwitchTrigger == trigger) {
+                    val alt = when (trigger) {
+                        GeelyClusterSwitchTrigger.SINGLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
+                        GeelyClusterSwitchTrigger.LONG_PRESS -> GeelyClusterSwitchTrigger.DOUBLE_CLICK
+                        GeelyClusterSwitchTrigger.DOUBLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
+                    }
+                    Toast.makeText(activity, "已自动将车况查看手势错开为「${alt.shortLabel}」", Toast.LENGTH_SHORT).show()
+                    alt
+                } else {
+                    config.telemetrySwitchTrigger
+                }
+                config = config.copy(
+                    centerSwitchTrigger = trigger,
+                    telemetrySwitchTrigger = adjustedTelemetryTrigger,
+                )
+                onConfigUpdated()
+                rebuildTabContent()
+            },
+            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        primaryKeyBox.addView(primaryTriggerRow, matchWrap(bottomMargin = dp(10)))
+
+        primaryKeyBox.addView(
+            TextView(activity).apply {
+                text = "主视图循环页面（常驻显示，不自动跳回）"
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            },
+            matchWrap(bottomMargin = dp(6)),
+        )
+        val primaryRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((cIdx, mode) in GeelyClusterCenterMode.PRIMARY_ORDER.withIndex()) {
+            val enabled = mode in config.primaryCycleModes
+            val label = if (enabled) "✓ ${mode.shortLabel}" else mode.shortLabel
+            val chip = createActionButton(label, selected = enabled) {
+                val nextSet = LinkedHashSet(config.primaryCycleModes)
+                if (enabled) {
+                    if (nextSet.size <= 1) {
+                        Toast.makeText(activity, "至少保留 1 个主视图页面", Toast.LENGTH_SHORT).show()
+                        return@createActionButton
+                    }
+                    nextSet.remove(mode)
+                } else {
+                    nextSet.add(mode)
+                }
+                config = config.copy(primaryCycleModes = nextSet)
+                onConfigUpdated()
+                rebuildTabContent()
+            }
+            primaryRow.addView(
+                chip,
+                LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                    if (cIdx > 0) marginStart = dp(6)
+                },
+            )
+        }
+        primaryKeyBox.addView(primaryRow, matchWrap(bottomMargin = dp(8)))
+        primaryKeyBox.addView(
+            createHintText("推荐微信键「单击」在导航地图与专辑封面间秒切并保持；若当前无地图或无封面会自动跳过。"),
+        )
+        card.addView(primaryKeyBox, matchWrap(bottomMargin = dp(10)))
+
+        // Subcard 2: Temporary telemetry peek wheel key (Trip / Tire / Vehicle Info)
+        val telemetryKeyBox = createSubCard()
+        val learningTelemetry = learningTarget == EcarxKx11WheelKeys.ClusterLearnTarget.TELEMETRY
+        val telemetryHeader = LinearLayout(activity).apply {
+            orientation = if (isMediumScreen()) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val telemetryInfoCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        telemetryInfoCol.addView(
+            TextView(activity).apply {
+                text = "车况查看快捷键（行程 / 胎压 / 车况）"
+                setTextColor(colors.primaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            },
+        )
+        val telemetryBindLabel = when {
+            config.telemetrySwitchKeyCode > 0 ->
+                "独立按键：${formatGeelyWheelKey(config.telemetrySwitchKeyCode)}"
+            config.centerSwitchKeyCode > 0 ->
+                "共用主视图键：${formatGeelyWheelKey(config.centerSwitchKeyCode)}"
+            else -> "未绑定（先绑定主视图键或单独学习）"
+        }
+        telemetryInfoCol.addView(
+            TextView(activity).apply {
+                text = telemetryBindLabel
+                setTextColor(if (config.effectiveTelemetrySwitchKeyCode > 0) colors.accent else colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setPadding(0, dp(3), 0, 0)
+            },
+        )
+        telemetryHeader.addView(
+            telemetryInfoCol,
+            if (isMediumScreen()) {
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(10) }
+            } else {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { bottomMargin = dp(8) }
+            },
+        )
+
+        val telemetryBtnRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        val telemetryLearnText = when {
+            learningTelemetry -> "请按下方向盘按键…"
+            config.telemetrySwitchKeyCode > 0 -> "改绑按键"
+            else -> "单独绑定按键"
+        }
+        val telemetryLearnBtn = if (learningTelemetry) {
+            createPrimaryButton(telemetryLearnText) {
+                cancelLearningState()
+                rebuildTabContent()
+            }
+        } else {
+            createActionButton(telemetryLearnText, selected = config.telemetrySwitchKeyCode > 0) {
+                startWheelKeyLearning(EcarxKx11WheelKeys.ClusterLearnTarget.TELEMETRY)
+            }
+        }
+        telemetryBtnRow.addView(
+            telemetryLearnBtn,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP)),
+        )
+        if (config.telemetrySwitchKeyCode > 0) {
+            val shareBtn = createActionButton("共用主视图键") {
+                cancelLearningState()
+                val nextTelemetryTrigger = if (config.centerSwitchKeyCode > 0 &&
+                    config.telemetrySwitchTrigger == config.centerSwitchTrigger
+                ) {
+                    when (config.centerSwitchTrigger) {
+                        GeelyClusterSwitchTrigger.SINGLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
+                        GeelyClusterSwitchTrigger.LONG_PRESS -> GeelyClusterSwitchTrigger.DOUBLE_CLICK
+                        GeelyClusterSwitchTrigger.DOUBLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
+                    }
+                } else {
+                    config.telemetrySwitchTrigger
+                }
+                config = config.copy(
+                    telemetrySwitchKeyCode = 0,
+                    telemetrySwitchTrigger = nextTelemetryTrigger,
+                )
+                onConfigUpdated()
+                rebuildTabContent()
+            }
+            telemetryBtnRow.addView(
+                shareBtn,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP))
+                    .apply { marginStart = dp(8) },
+            )
+        }
+        telemetryHeader.addView(telemetryBtnRow)
+        telemetryKeyBox.addView(telemetryHeader, matchWrap(bottomMargin = dp(10)))
+
+        val telemetryTriggerRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        telemetryTriggerRow.addView(
+            TextView(activity).apply {
+                text = "触发手势"
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        telemetryTriggerRow.addView(
+            createSegmentedRow(
+                options = listOf(
+                    GeelyClusterSwitchTrigger.SINGLE_CLICK to "单击",
+                    GeelyClusterSwitchTrigger.LONG_PRESS to "长按",
+                    GeelyClusterSwitchTrigger.DOUBLE_CLICK to "双击",
+                ),
+                selected = config.telemetrySwitchTrigger,
+                heightDp = 38,
+            ) { trigger ->
+                val adjustedPrimaryTrigger = if (config.sharesTelemetryKeyWithPrimary && config.centerSwitchTrigger == trigger) {
+                    val alt = when (trigger) {
+                        GeelyClusterSwitchTrigger.SINGLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
+                        GeelyClusterSwitchTrigger.LONG_PRESS -> GeelyClusterSwitchTrigger.SINGLE_CLICK
+                        GeelyClusterSwitchTrigger.DOUBLE_CLICK -> GeelyClusterSwitchTrigger.SINGLE_CLICK
+                    }
+                    Toast.makeText(activity, "已自动将主视图切换手势错开为「${alt.shortLabel}」", Toast.LENGTH_SHORT).show()
+                    alt
+                } else {
+                    config.centerSwitchTrigger
+                }
+                config = config.copy(
+                    centerSwitchTrigger = adjustedPrimaryTrigger,
+                    telemetrySwitchTrigger = trigger,
+                )
+                onConfigUpdated()
+                rebuildTabContent()
+            },
+            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        telemetryKeyBox.addView(telemetryTriggerRow, matchWrap(bottomMargin = dp(10)))
+
+        telemetryKeyBox.addView(
+            TextView(activity).apply {
+                text = "车况查看包含页面"
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            },
+            matchWrap(bottomMargin = dp(6)),
+        )
+        val telemetryRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((cIdx, mode) in GeelyClusterCenterMode.TELEMETRY_ORDER.withIndex()) {
+            val enabled = mode in config.telemetryCycleModes
+            val label = if (enabled) "✓ ${mode.shortLabel}" else mode.shortLabel
+            val chip = createActionButton(label, selected = enabled) {
+                val nextSet = LinkedHashSet(config.telemetryCycleModes)
+                if (enabled) {
+                    if (nextSet.size <= 1) {
+                        Toast.makeText(activity, "至少保留 1 个车况页面", Toast.LENGTH_SHORT).show()
+                        return@createActionButton
+                    }
+                    nextSet.remove(mode)
+                } else {
+                    nextSet.add(mode)
+                }
+                config = config.copy(telemetryCycleModes = nextSet)
+                onConfigUpdated()
+                rebuildTabContent()
+            }
+            telemetryRow.addView(
+                chip,
+                LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                    if (cIdx > 0) marginStart = dp(6)
+                },
+            )
+        }
+        telemetryKeyBox.addView(telemetryRow, matchWrap(bottomMargin = dp(10)))
+
+        telemetryKeyBox.addView(createSubLabel("车况页自动关闭时长"), matchWrap(bottomMargin = dp(6)))
+        telemetryKeyBox.addView(
             createSegmentedRow(
                 options = GeelySelfDrawConfig.NAV_AUTO_RETURN_OPTIONS.map { sec ->
                     sec to if (sec == 0) "关闭" else "${sec}秒"
@@ -1362,48 +1702,51 @@ internal class GeelyClusterSettingsPanel(
             },
             matchWrap(bottomMargin = dp(6)),
         )
-        card.addView(
-            createHintText("主驾仪表存在地图/导航投射（CarPlay 或车机导航）时，切看「本次行程 / 胎压胎温 / 综合车况」无操作达到设定时间后自动切回导航地图（再次切页会重新计时；无地图投射时不自动返回）。"),
-            matchWrap(bottomMargin = dp(8)),
+        telemetryKeyBox.addView(
+            createHintText(
+                "推荐同键「长按」呼出车况（零延迟；也可选「双击」或单独绑键）。打开车况后，倒计时内再短按可顺切下一项（翻完即关），无操作到达设定时间后自动关闭并返回原主视图（地图 / 专辑 / 时钟）。",
+            ),
         )
+        card.addView(telemetryKeyBox, matchWrap(bottomMargin = dp(10)))
 
-        addFlatSwitchRow(
-            container = card,
-            title = "胎压 / 胎温异常自动提醒",
-            subtitle = "即使当前仪表停留在导航地图、专辑或时钟页，检测到任一轮胎胎压或胎温异常时也会在仪表顶部弹出警示条。",
-            checked = config.tireAlertPopupEnabled,
-        ) { checked ->
-            config = config.copy(tireAlertPopupEnabled = checked)
-            onConfigUpdated()
-        }
+        // Subcard 3: Steering-wheel Voice key -> Siri shortcut & override
+        val voiceBox = createSubCard()
+        val siriEnabled = WheelZoomSettings.siriKey(activity)
+        val currentSiriKey = WheelZoomSettings.key(activity, WheelZoomSettings.Role.SIRI)
+        val siriBoundToVoiceKey = siriEnabled &&
+            EcarxKx11WheelKeys.isGeelyInputKey(currentSiriKey) &&
+            currentSiriKey?.code == EcarxKx11WheelKeys.KEY_VOICE_ASSIST
 
-        card.addView(createHairline(), matchWrap(topMargin = dp(6), bottomMargin = dp(12)))
-
-        // Wheel key subcard
-        val keyBox = createSubCard()
-        val keyHeader = LinearLayout(activity).apply {
+        val voiceHeader = LinearLayout(activity).apply {
             orientation = if (isMediumScreen()) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val keyInfoCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        keyInfoCol.addView(
+        val voiceInfoCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        voiceInfoCol.addView(
             TextView(activity).apply {
-                text = "方向盘视图循环切换键"
+                text = "方向盘语音键（Siri）"
                 setTextColor(colors.primaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
                 typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             },
         )
-        keyInfoCol.addView(
+        val siriKeySummary = when {
+            !siriEnabled -> "Siri 快捷键未启用"
+            currentSiriKey != null && EcarxKx11WheelKeys.isGeelyInputKey(currentSiriKey) ->
+                "当前绑定：${formatGeelyWheelKey(currentSiriKey.code)}"
+            currentSiriKey != null -> "当前绑定：按键 ${currentSiriKey.code}"
+            else -> "尚未学习 Siri 按键"
+        }
+        voiceInfoCol.addView(
             TextView(activity).apply {
-                text = "当前绑定：${formatGeelyWheelKey(config.centerSwitchKeyCode)}"
-                setTextColor(if (config.centerSwitchKeyCode > 0) colors.accent else colors.secondaryText)
+                text = siriKeySummary
+                setTextColor(if (siriBoundToVoiceKey) colors.accent else colors.secondaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setPadding(0, dp(3), 0, 0)
             },
         )
-        keyHeader.addView(
-            keyInfoCol,
+        voiceHeader.addView(
+            voiceInfoCol,
             if (isMediumScreen()) {
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(10) }
             } else {
@@ -1412,157 +1755,88 @@ internal class GeelyClusterSettingsPanel(
             },
         )
 
-        val keyBtnRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        val learnText = when {
-            learningKey -> "请按下方向盘按键…"
-            config.centerSwitchKeyCode > 0 -> "重新学习按键"
-            else -> "学习方向盘按键"
+        val bindVoiceBtn = createActionButton(
+            text = if (siriBoundToVoiceKey) "已绑定原车语音键" else "一键绑定原车语音键",
+            selected = siriBoundToVoiceKey,
+        ) {
+            WheelZoomSettings.setSiriKey(activity, true)
+            WheelZoomSettings.setSiriDoublePress(activity, false)
+            WheelZoomSettings.assign(
+                activity,
+                WheelZoomSettings.Role.SIRI,
+                EcarxKx11WheelKeys.toWheelKey(EcarxKx11WheelKeys.KEY_VOICE_ASSIST),
+            )
+            EcarxKx11WheelKeys.settingsChanged()
+            Toast.makeText(activity, "已将原车语音键 (200231) 设为 Siri 快捷键", Toast.LENGTH_SHORT).show()
+            rebuildTabContent()
         }
-        val learnBtn = if (learningKey) {
-            createPrimaryButton(learnText) {
-                cancelLearningState()
-                rebuildTabContent()
-            }
-        } else {
-            createActionButton(learnText, selected = config.centerSwitchKeyCode > 0) {
-                startWheelKeyLearning()
-            }
-        }
-        keyBtnRow.addView(
-            learnBtn,
+        voiceHeader.addView(
+            bindVoiceBtn,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP)),
         )
-        if (config.centerSwitchKeyCode > 0) {
-            val clearBtn = createActionButton("清除") {
-                cancelLearningState()
-                config = config.copy(centerSwitchKeyCode = 0)
-                onConfigUpdated()
-                rebuildTabContent()
-            }
-            keyBtnRow.addView(
-                clearBtn,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP))
-                    .apply { marginStart = dp(8) },
-            )
-        }
-        keyHeader.addView(keyBtnRow)
-        keyBox.addView(keyHeader, matchWrap(bottomMargin = dp(10)))
+        voiceBox.addView(voiceHeader, matchWrap(bottomMargin = dp(8)))
 
-        // Trigger mode row
-        val triggerRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val interceptSubtitle = when {
+            !config.interceptVoiceKeyForSiri ->
+                "关闭时短按语音键保留给原车「你好吉利」，长按语音键呼出 Siri。"
+            !siriBoundToVoiceKey ->
+                "请先点击上方「一键绑定原车语音键」，连接 CarPlay 时再尝试拦截短按。"
+            EcarxKx11WheelKeys.lastVoiceInterceptStatus == EcarxKx11WheelKeys.VoiceInterceptStatus.GRANTED ->
+                "CarPlay 已接管语音键短按（直呼 Siri），断开 CarPlay 后自动还原原车语音。"
+            EcarxKx11WheelKeys.lastVoiceInterceptStatus == EcarxKx11WheelKeys.VoiceInterceptStatus.REJECTED ->
+                "车机系统拒绝拦截语音键短按，已自动退回长按呼出 Siri（短按保留原车语音）。"
+            EcarxKx11WheelKeys.lastVoiceInterceptStatus == EcarxKx11WheelKeys.VoiceInterceptStatus.ERROR ->
+                "拦截语音键接口异常，已自动退回长按呼出 Siri。"
+            EcarxKx11WheelKeys.isCarPlaySessionActive() ->
+                "已开启，正在尝试接管语音键短按（未接管前可长按呼出 Siri）。"
+            else ->
+                "已开启：连接 CarPlay 时尝试调用车机拦截接口覆盖原车语音助手（断开自动还原）。"
         }
-        triggerRow.addView(
-            TextView(activity).apply {
-                text = "触发方式"
-                setTextColor(colors.secondaryText)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-        )
-        triggerRow.addView(
-            createSegmentedRow(
-                options = listOf(
-                    GeelyClusterSwitchTrigger.LONG_PRESS to "长按",
-                    GeelyClusterSwitchTrigger.DOUBLE_CLICK to "双击",
-                ),
-                selected = config.centerSwitchTrigger,
-                heightDp = 38,
-            ) { trigger ->
-                config = config.copy(centerSwitchTrigger = trigger)
-                onConfigUpdated()
-                rebuildTabContent()
-            },
-            LinearLayout.LayoutParams(dp(180), ViewGroup.LayoutParams.WRAP_CONTENT),
-        )
-        keyBox.addView(triggerRow, matchWrap(bottomMargin = dp(10)))
-
-        // Configurable steering-wheel cycle pages
-        keyBox.addView(
-            TextView(activity).apply {
-                text = "方向盘循环包含的页面（点击勾选）"
-                setTextColor(colors.secondaryText)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-            },
-            matchWrap(bottomMargin = dp(6)),
-        )
-        val cycleRows = listOf(
-            listOf(
-                GeelyClusterCenterMode.MAP,
-                GeelyClusterCenterMode.ALBUM,
-                GeelyClusterCenterMode.CLOCK,
-            ),
-            listOf(
-                GeelyClusterCenterMode.TRIP,
-                GeelyClusterCenterMode.TIRE,
-                GeelyClusterCenterMode.VEHICLE_INFO,
-            ),
-        )
-        for ((rIdx, modes) in cycleRows.withIndex()) {
-            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-            for ((cIdx, mode) in modes.withIndex()) {
-                val enabled = mode in config.cycleModes
-                val label = if (enabled) "✓ ${mode.shortLabel}" else mode.shortLabel
-                val chip = createActionButton(label, selected = enabled) {
-                    val nextSet = LinkedHashSet(config.cycleModes)
-                    if (enabled) {
-                        if (nextSet.size <= 1) {
-                            Toast.makeText(activity, "至少保留 1 个循环页面", Toast.LENGTH_SHORT).show()
-                            return@createActionButton
-                        }
-                        nextSet.remove(mode)
-                    } else {
-                        nextSet.add(mode)
-                    }
-                    config = config.copy(cycleModes = nextSet)
-                    onConfigUpdated()
-                    rebuildTabContent()
-                }
-                row.addView(
-                    chip,
-                    LinearLayout.LayoutParams(0, dp(36), 1f).apply {
-                        if (cIdx > 0) marginStart = dp(6)
-                    },
-                )
-            }
-            keyBox.addView(
-                row,
-                matchWrap(bottomMargin = if (rIdx == cycleRows.lastIndex) dp(8) else dp(6)),
-            )
+        addFlatSwitchRow(
+            container = voiceBox,
+            title = "CarPlay 期间覆盖原车语音键（短按呼 Siri）",
+            subtitle = interceptSubtitle,
+            checked = config.interceptVoiceKeyForSiri,
+        ) { checked ->
+            config = config.copy(interceptVoiceKeyForSiri = checked)
+            onConfigUpdated()
+            EcarxKx11WheelKeys.settingsChanged()
+            rebuildTabContent()
         }
-
-        keyBox.addView(
-            createHintText("按动绑定按键将在以上已勾选页面间循环切换（无地图或无封面时自动跳过）。若与短按 Siri 共键，建议使用「长按」触发。"),
-        )
-        card.addView(keyBox)
+        card.addView(voiceBox)
         parent.addView(card, matchWrap(bottomMargin = dp(GeelyUiDimens.BLOCK_GAP_DP)))
     }
 
-    private fun startWheelKeyLearning() {
-        learningKey = true
+    private fun startWheelKeyLearning(target: EcarxKx11WheelKeys.ClusterLearnTarget) {
+        learningTarget = target
         rebuildTabContent()
         val started = EcarxKx11WheelKeys.learnClusterSwitchKey(
             context = activity,
+            target = target,
             cancelled = {
                 activity.runOnUiThread {
-                    learningKey = false
+                    learningTarget = null
                     rebuildTabContent()
                 }
             },
             done = { learnedCode ->
                 activity.runOnUiThread {
-                    learningKey = false
-                    config = config.copy(centerSwitchKeyCode = learnedCode)
+                    learningTarget = null
+                    config = GeelyClusterPrefs.load(activity)
                     onConfigUpdated()
                     val siriSameKey = WheelZoomSettings.siriKey(activity) &&
                         WheelZoomSettings.key(activity, WheelZoomSettings.Role.SIRI)
                             ?.let { EcarxKx11WheelKeys.isGeelyInputKey(it) && it.code == learnedCode } == true
                     val keyDisplay = formatGeelyWheelKey(learnedCode)
-                    val tip = if (siriSameKey && config.centerSwitchTrigger == GeelyClusterSwitchTrigger.DOUBLE_CLICK) {
-                        "已绑定 $keyDisplay（与 Siri 共键建议改用「长按」触发）"
-                    } else {
-                        "已绑定仪表切换按键：$keyDisplay（${config.centerSwitchTrigger.displayName}切换）"
+                    val tip = when {
+                        siriSameKey ->
+                            "已绑定 $keyDisplay（与 Siri 共键，建议将 Siri 改绑原车语音键以避免冲突）"
+                        target == EcarxKx11WheelKeys.ClusterLearnTarget.PRIMARY ->
+                            "已绑定主视图切换键：$keyDisplay（${config.centerSwitchTrigger.displayName}切换）"
+                        config.sharesTelemetryKeyWithPrimary ->
+                            "车况查看已与主视图共用 $keyDisplay（${config.telemetrySwitchTrigger.displayName}触发）"
+                        else ->
+                            "已绑定独立车况按键：$keyDisplay（${config.telemetrySwitchTrigger.displayName}触发）"
                     }
                     Toast.makeText(activity, tip, Toast.LENGTH_LONG).show()
                     rebuildTabContent()
@@ -1570,7 +1844,7 @@ internal class GeelyClusterSettingsPanel(
             },
         )
         if (!started) {
-            learningKey = false
+            learningTarget = null
             rebuildTabContent()
             Toast.makeText(activity, "当前车机不支持吉利方向盘输入服务", Toast.LENGTH_SHORT).show()
         }

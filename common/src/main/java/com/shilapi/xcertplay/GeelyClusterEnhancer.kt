@@ -89,19 +89,32 @@ internal object GeelyClusterEnhancer {
     private var modeBeforeTelemetryPeek: GeelyClusterCenterMode? = null
     private val navAutoReturnRunnable = Runnable { performNavAutoReturn() }
 
-    private fun hasActiveClusterMapSource(): Boolean =
-        isFullScreenPresentationActive || nativeMapProjected || GeelyNativeClusterMapObserver.isNativeMapProjected()
-
     private fun cancelNavAutoReturn() {
         mainHandler.removeCallbacks(navAutoReturnRunnable)
         modeBeforeTelemetryPeek = null
     }
 
+    fun isTelemetryPageActive(context: Context): Boolean =
+        GeelyClusterPrefs.load(context).centerMode.isTelemetryPage
+
+    private fun resolveFallbackPrimaryMode(cfg: GeelySelfDrawConfig): GeelyClusterCenterMode {
+        val hasCarPlay = isFullScreenPresentationActive
+        val hasNativeMap = !hasCarPlay && (nativeMapProjected || GeelyNativeClusterMapObserver.isNativeMapProjected())
+        val hasMap = hasCarPlay || hasNativeMap
+        val hasArtwork = currentFakeUltraView?.hasUsableArtwork() == true
+        val hasMediaAlbum = hasArtwork && (hasCarPlay || carPlayHostAttached || lastVehicleMediaSnapshot.hasContent)
+        return when {
+            hasMap -> GeelyClusterCenterMode.MAP
+            cfg.albumArtEnabled && hasMediaAlbum -> GeelyClusterCenterMode.ALBUM
+            else -> GeelyClusterCenterMode.AUTO
+        }
+    }
+
     /**
-     * When the cluster display has an active map/navigation projection (either CarPlay cluster map
-     * stream or native head-unit navigation projection) and the driver switches to a telemetry page
-     * (`TRIP` / `TIRE` / `VEHICLE_INFO`), automatically returns to the map after
-     * [GeelySelfDrawConfig.navAutoReturnSeconds] seconds. Each subsequent switch resets the timer.
+     * When the driver switches to a telemetry page (`TRIP` / `TIRE` / `VEHICLE_INFO`), automatically
+     * closes the telemetry view and returns to the previous primary mode (`MAP` / `ALBUM` / `CLOCK`
+     * / `AUTO`) after [GeelySelfDrawConfig.navAutoReturnSeconds] seconds. Each subsequent switch
+     * resets the timer.
      */
     fun onCenterModeChangedByUser(
         context: Context,
@@ -117,23 +130,17 @@ internal object GeelyClusterEnhancer {
                 return@runOnMain
             }
             val cfg = GeelyClusterPrefs.load(app)
-            val hasMap = hasActiveClusterMapSource()
-            if (!hasMap || cfg.navAutoReturnSeconds <= 0) {
+            if (cfg.navAutoReturnSeconds <= 0) {
                 modeBeforeTelemetryPeek = null
                 return@runOnMain
             }
-            if (modeBeforeTelemetryPeek == null) {
-                val autoShowsMap = (isFullScreenPresentationActive && latestGuidance != null) ||
-                    (!isFullScreenPresentationActive && (nativeMapProjected || GeelyNativeClusterMapObserver.isNativeMapProjected()))
-                modeBeforeTelemetryPeek = if (previousMode == GeelyClusterCenterMode.AUTO && autoShowsMap) {
-                    GeelyClusterCenterMode.AUTO
-                } else {
-                    GeelyClusterCenterMode.MAP
-                }
+            if (modeBeforeTelemetryPeek == null && previousMode != null && !previousMode.isTelemetryPage) {
+                modeBeforeTelemetryPeek = previousMode
             }
+            val targetReturn = modeBeforeTelemetryPeek ?: resolveFallbackPrimaryMode(cfg)
             val delaySec = cfg.navAutoReturnSeconds
             hostLogger(
-                "GeelyCluster: auto-return to ${modeBeforeTelemetryPeek?.name} in ${delaySec}s " +
+                "GeelyCluster: telemetry auto-close to ${targetReturn.name} in ${delaySec}s " +
                     "(from=${nextMode.name}, carPlayMap=$isFullScreenPresentationActive, nativeMap=$nativeMapProjected)",
             )
             mainHandler.postDelayed(navAutoReturnRunnable, delaySec * 1000L)
@@ -143,21 +150,26 @@ internal object GeelyClusterEnhancer {
     private fun performNavAutoReturn() {
         val app = hostAppContext ?: return
         val cfg = GeelyClusterPrefs.load(app)
-        if (!hasActiveClusterMapSource() || cfg.navAutoReturnSeconds <= 0 || !cfg.centerMode.isTelemetryPage) {
+        if (cfg.navAutoReturnSeconds <= 0 || !cfg.centerMode.isTelemetryPage) {
             modeBeforeTelemetryPeek = null
             return
         }
-        val autoShowsMap = (isFullScreenPresentationActive && latestGuidance != null) ||
-            (!isFullScreenPresentationActive && (nativeMapProjected || GeelyNativeClusterMapObserver.isNativeMapProjected()))
-        val returnMode = if (modeBeforeTelemetryPeek == GeelyClusterCenterMode.AUTO && autoShowsMap) {
-            GeelyClusterCenterMode.AUTO
-        } else {
-            GeelyClusterCenterMode.MAP
-        }
+        closeTelemetryPeek(app, cfg, reason = "timeout")
+    }
+
+    private fun closeTelemetryPeek(
+        app: Context,
+        cfg: GeelySelfDrawConfig,
+        reason: String,
+    ): GeelyClusterCenterMode {
+        mainHandler.removeCallbacks(navAutoReturnRunnable)
+        val returnMode = modeBeforeTelemetryPeek?.takeUnless { it.isTelemetryPage }
+            ?: resolveFallbackPrimaryMode(cfg)
         modeBeforeTelemetryPeek = null
-        hostLogger("GeelyCluster: auto-returned to ${returnMode.name} from ${cfg.centerMode.name}")
+        hostLogger("GeelyCluster: telemetry closed ($reason) -> ${returnMode.name} from ${cfg.centerMode.name}")
         GeelyClusterPrefs.save(app, cfg.copy(centerMode = returnMode))
         refreshConfig(app)
+        return returnMode
     }
 
     private fun isPhoneCallActive(context: Context?): Boolean {
@@ -304,9 +316,6 @@ internal object GeelyClusterEnhancer {
     private fun applyNativeMapState() {
         val activeNative = !isFullScreenPresentationActive && nativeMapProjected
         currentFakeUltraView?.nativeMapProjected = activeNative
-        if (!hasActiveClusterMapSource()) {
-            cancelNavAutoReturn()
-        }
     }
 
     private fun ensureHostNightObserver() {
@@ -456,6 +465,7 @@ internal object GeelyClusterEnhancer {
     fun onAppLaunched(context: Context) {
         val app = context.applicationContext
         hostAppContext = app
+        EcarxKx11WheelKeys.ensureDefaultPresets(app)
         GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
         ensureVehicleDayNightObserver(app)
@@ -481,6 +491,7 @@ internal object GeelyClusterEnhancer {
     fun onBootKeepAliveStarted(context: Context) {
         val app = context.applicationContext
         hostAppContext = app
+        EcarxKx11WheelKeys.ensureDefaultPresets(app)
         GeelyClusterProjection.releaseStale(app)
         GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
@@ -643,9 +654,6 @@ internal object GeelyClusterEnhancer {
         isFullScreenPresentationActive = presentationShowing
 
         val routeActive = guidance != null
-        if (!hasActiveClusterMapSource()) {
-            cancelNavAutoReturn()
-        }
         currentFakeUltraView?.apply {
             carPlayConnected = presentationShowing
             this.routeActive = presentationShowing && routeActive
@@ -914,23 +922,35 @@ internal object GeelyClusterEnhancer {
     }
 
     /**
-     * Cycles the center display content across the user-enabled pages in [GeelySelfDrawConfig.cycleModes]
-     * (`MAP`, `ALBUM`, `CLOCK`, `TRIP`, `TIRE`, `VEHICLE_INFO`), automatically skipping `MAP` when
-     * no map projection is active and skipping `ALBUM` when no artwork is available.
+     * Cycles the persistent primary center display content across [GeelySelfDrawConfig.primaryCycleModes]
+     * (`MAP`, `ALBUM`, `CLOCK`), automatically skipping `MAP` when no map projection is active and
+     * skipping `ALBUM` when no artwork is available.
+     *
+     * If a telemetry peek page is currently open, returns directly to the primary view that was
+     * showing before opening telemetry.
      */
-    fun cycleCenterMode(context: Context): String {
+    fun cyclePrimaryCenterMode(context: Context): String {
         val app = context.applicationContext
+        hostAppContext = app
         val cfg = GeelyClusterPrefs.load(app)
+        if (cfg.centerMode.isTelemetryPage) {
+            val returned = closeTelemetryPeek(app, cfg, reason = "primary-key")
+            if (!isFullScreenPresentationActive) {
+                GeelyNativeClusterMapObserver.refreshNow()
+            }
+            return returned.name
+        }
+
         val hasCarPlay = isFullScreenPresentationActive
-        val hasNativeMap = !hasCarPlay && nativeMapProjected
+        val hasNativeMap = !hasCarPlay && (nativeMapProjected || GeelyNativeClusterMapObserver.isNativeMapProjected())
         val hasMapSource = hasCarPlay || hasNativeMap
         val hasArtwork = currentFakeUltraView?.hasUsableArtwork() == true
         val hasMediaAlbum = hasArtwork && (hasCarPlay || carPlayHostAttached || lastVehicleMediaSnapshot.hasContent)
         val routeNow = hasCarPlay && latestGuidance != null
 
-        val enabledSet = cfg.cycleModes
-        val available = ArrayList<GeelyClusterCenterMode>(GeelyClusterCenterMode.CYCLE_ORDER.size)
-        for (mode in GeelyClusterCenterMode.CYCLE_ORDER) {
+        val enabledSet = cfg.primaryCycleModes
+        val available = ArrayList<GeelyClusterCenterMode>(GeelyClusterCenterMode.PRIMARY_ORDER.size)
+        for (mode in GeelyClusterCenterMode.PRIMARY_ORDER) {
             if (mode !in enabledSet) continue
             when (mode) {
                 GeelyClusterCenterMode.MAP -> if (hasMapSource) available.add(mode)
@@ -939,7 +959,11 @@ internal object GeelyClusterEnhancer {
             }
         }
         if (available.isEmpty()) {
-            available.add(GeelyClusterCenterMode.CLOCK)
+            when {
+                hasMapSource -> available.add(GeelyClusterCenterMode.MAP)
+                hasMediaAlbum -> available.add(GeelyClusterCenterMode.ALBUM)
+                else -> available.add(GeelyClusterCenterMode.CLOCK)
+            }
         }
 
         val currentVisible = when (cfg.centerMode) {
@@ -954,14 +978,12 @@ internal object GeelyClusterEnhancer {
                 else -> GeelyClusterCenterMode.CLOCK
             }
             GeelyClusterCenterMode.CLOCK -> GeelyClusterCenterMode.CLOCK
-            GeelyClusterCenterMode.TRIP -> GeelyClusterCenterMode.TRIP
-            GeelyClusterCenterMode.TIRE -> GeelyClusterCenterMode.TIRE
-            GeelyClusterCenterMode.VEHICLE_INFO -> GeelyClusterCenterMode.VEHICLE_INFO
             GeelyClusterCenterMode.AUTO -> when {
                 routeNow || hasNativeMap -> GeelyClusterCenterMode.MAP
                 cfg.albumArtEnabled && hasMediaAlbum -> GeelyClusterCenterMode.ALBUM
                 else -> GeelyClusterCenterMode.CLOCK
             }
+            else -> available.first()
         }
 
         val currentIdx = available.indexOf(currentVisible)
@@ -975,6 +997,47 @@ internal object GeelyClusterEnhancer {
         }
         return nextMode.name
     }
+
+    /**
+     * Opens or advances the temporary telemetry peek pages (`TRIP` / `TIRE` / `VEHICLE_INFO`).
+     * Automatically closes and restores the prior primary view after [GeelySelfDrawConfig.navAutoReturnSeconds]
+     * seconds of inactivity, or immediately after the last enabled page when [closeAfterLast] is `true`.
+     */
+    fun cycleTelemetryCenterMode(context: Context, closeAfterLast: Boolean = false): String {
+        val app = context.applicationContext
+        hostAppContext = app
+        val cfg = GeelyClusterPrefs.load(app)
+        val telemetryList = GeelyClusterCenterMode.TELEMETRY_ORDER
+            .filter { it in cfg.telemetryCycleModes }
+            .ifEmpty { listOf(GeelyClusterCenterMode.TRIP) }
+
+        if (!cfg.centerMode.isTelemetryPage) {
+            val nextMode = telemetryList.first()
+            GeelyClusterPrefs.save(app, cfg.copy(centerMode = nextMode))
+            refreshConfig(app)
+            onCenterModeChangedByUser(app, cfg.centerMode, nextMode)
+            return nextMode.name
+        }
+
+        val currentIdx = telemetryList.indexOf(cfg.centerMode)
+        if (closeAfterLast && currentIdx == telemetryList.lastIndex) {
+            val returned = closeTelemetryPeek(app, cfg, reason = "cycle-end")
+            if (!isFullScreenPresentationActive) {
+                GeelyNativeClusterMapObserver.refreshNow()
+            }
+            return returned.name
+        }
+
+        val nextIdx = if (currentIdx >= 0) (currentIdx + 1) % telemetryList.size else 0
+        val nextMode = telemetryList[nextIdx]
+        GeelyClusterPrefs.save(app, cfg.copy(centerMode = nextMode))
+        refreshConfig(app)
+        onCenterModeChangedByUser(app, null, nextMode)
+        return nextMode.name
+    }
+
+    /** Backwards-compatible alias for cycling the primary cluster center display. */
+    fun cycleCenterMode(context: Context): String = cyclePrimaryCenterMode(context)
 
     private fun syncClusterWheelKeyActive(context: Context) {
         val active = isFullScreenPresentationActive || isPersistentThemeActive()

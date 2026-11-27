@@ -48,19 +48,50 @@ internal enum class GeelyClusterCenterMode(
         get() = this == TRIP || this == TIRE || this == VEHICLE_INFO
 
     companion object {
-        val CYCLE_ORDER: List<GeelyClusterCenterMode> = listOf(
+        val PRIMARY_ORDER: List<GeelyClusterCenterMode> = listOf(
             MAP,
             ALBUM,
             CLOCK,
+        )
+
+        val TELEMETRY_ORDER: List<GeelyClusterCenterMode> = listOf(
             TRIP,
             TIRE,
             VEHICLE_INFO,
         )
 
+        val CYCLE_ORDER: List<GeelyClusterCenterMode> = PRIMARY_ORDER + TELEMETRY_ORDER
+
+        val DEFAULT_PRIMARY_MODES: Set<GeelyClusterCenterMode> = setOf(MAP, ALBUM)
+
+        val DEFAULT_TELEMETRY_MODES: Set<GeelyClusterCenterMode> = TELEMETRY_ORDER.toSet()
+
         val DEFAULT_CYCLE_MODES: Set<GeelyClusterCenterMode> = CYCLE_ORDER.toSet()
 
         fun fromName(raw: String?): GeelyClusterCenterMode =
             entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: AUTO
+
+        fun parsePrimaryModes(raw: String?): Set<GeelyClusterCenterMode> {
+            if (raw.isNullOrBlank()) return DEFAULT_PRIMARY_MODES
+            val parsed = raw.split(',')
+                .mapNotNull { token -> PRIMARY_ORDER.firstOrNull { it.name.equals(token.trim(), ignoreCase = true) } }
+                .toCollection(LinkedHashSet())
+            return if (parsed.isEmpty()) DEFAULT_PRIMARY_MODES else parsed
+        }
+
+        fun serializePrimaryModes(modes: Set<GeelyClusterCenterMode>): String =
+            PRIMARY_ORDER.filter { it in modes }.joinToString(",") { it.name }
+
+        fun parseTelemetryModes(raw: String?): Set<GeelyClusterCenterMode> {
+            if (raw.isNullOrBlank()) return DEFAULT_TELEMETRY_MODES
+            val parsed = raw.split(',')
+                .mapNotNull { token -> TELEMETRY_ORDER.firstOrNull { it.name.equals(token.trim(), ignoreCase = true) } }
+                .toCollection(LinkedHashSet())
+            return if (parsed.isEmpty()) DEFAULT_TELEMETRY_MODES else parsed
+        }
+
+        fun serializeTelemetryModes(modes: Set<GeelyClusterCenterMode>): String =
+            TELEMETRY_ORDER.filter { it in modes }.joinToString(",") { it.name }
 
         fun parseCycleModes(raw: String?): Set<GeelyClusterCenterMode> {
             if (raw.isNullOrBlank()) return DEFAULT_CYCLE_MODES
@@ -79,14 +110,18 @@ internal enum class GeelyClusterSwitchTrigger(
     val displayName: String,
     val shortLabel: String,
 ) {
+    SINGLE_CLICK("单击", "单击"),
     LONG_PRESS("长按", "长按"),
-    DOUBLE_CLICK("连点（双击）", "连点");
+    DOUBLE_CLICK("双击", "双击");
 
     fun next(): GeelyClusterSwitchTrigger = entries[(ordinal + 1) % entries.size]
 
     companion object {
-        fun fromName(raw: String?): GeelyClusterSwitchTrigger =
-            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: LONG_PRESS
+        fun fromName(
+            raw: String?,
+            defaultValue: GeelyClusterSwitchTrigger = SINGLE_CLICK,
+        ): GeelyClusterSwitchTrigger =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: defaultValue
     }
 }
 
@@ -198,15 +233,29 @@ internal data class GeelySelfDrawConfig(
     val preferredDisplayId: Int = 2,
     val centerMode: GeelyClusterCenterMode = GeelyClusterCenterMode.AUTO,
     val centerSwitchKeyCode: Int = 0,
-    val centerSwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
-    val cycleModes: Set<GeelyClusterCenterMode> = GeelyClusterCenterMode.DEFAULT_CYCLE_MODES,
+    val centerSwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.SINGLE_CLICK,
+    val primaryCycleModes: Set<GeelyClusterCenterMode> = GeelyClusterCenterMode.DEFAULT_PRIMARY_MODES,
+    val telemetrySwitchKeyCode: Int = 0,
+    val telemetrySwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
+    val telemetryCycleModes: Set<GeelyClusterCenterMode> = GeelyClusterCenterMode.DEFAULT_TELEMETRY_MODES,
     val tireAlertPopupEnabled: Boolean = true,
     val navAutoReturnSeconds: Int = DEFAULT_NAV_AUTO_RETURN_SECONDS,
+    val interceptVoiceKeyForSiri: Boolean = false,
 ) {
     companion object {
-        const val DEFAULT_NAV_AUTO_RETURN_SECONDS = 10
+        const val DEFAULT_NAV_AUTO_RETURN_SECONDS = 5
         val NAV_AUTO_RETURN_OPTIONS = listOf(0, 5, 10, 15, 20)
     }
+
+    val cycleModes: Set<GeelyClusterCenterMode>
+        get() = primaryCycleModes + telemetryCycleModes
+
+    val effectiveTelemetrySwitchKeyCode: Int
+        get() = if (telemetrySwitchKeyCode > 0) telemetrySwitchKeyCode else centerSwitchKeyCode
+
+    val sharesTelemetryKeyWithPrimary: Boolean
+        get() = centerSwitchKeyCode > 0 && (telemetrySwitchKeyCode <= 0 || telemetrySwitchKeyCode == centerSwitchKeyCode)
+
     val hasAnySelfDrawOverlay: Boolean
         get() = hudEnabled || cardEnabled || fullscreenCardEnabled || laneEnabled || previewEnabled
 
@@ -242,8 +291,13 @@ internal object GeelyClusterPrefs {
     private const val KEY_CENTER_SWITCH_KEY_CODE = "self_draw_center_switch_key_code"
     private const val KEY_CENTER_SWITCH_TRIGGER = "self_draw_center_switch_trigger"
     private const val KEY_CYCLE_MODES = "self_draw_cycle_modes"
+    private const val KEY_PRIMARY_CYCLE_MODES = "self_draw_primary_cycle_modes"
+    private const val KEY_TELEMETRY_SWITCH_KEY_CODE = "self_draw_telemetry_switch_key_code"
+    private const val KEY_TELEMETRY_SWITCH_TRIGGER = "self_draw_telemetry_switch_trigger"
+    private const val KEY_TELEMETRY_CYCLE_MODES = "self_draw_telemetry_cycle_modes"
     private const val KEY_TIRE_ALERT_POPUP_ENABLED = "self_draw_tire_alert_popup_enabled"
     private const val KEY_NAV_AUTO_RETURN_SECONDS = "self_draw_nav_auto_return_seconds"
+    private const val KEY_INTERCEPT_VOICE_KEY_FOR_SIRI = "self_draw_intercept_voice_key_for_siri"
 
     fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -255,6 +309,42 @@ internal object GeelyClusterPrefs {
         val fullscreenCardArea = readArea(sp, "fullscreen_card", GeelyOverlayArea.DEFAULT_FULLSCREEN_CARD)
         val laneX = if (sp.contains(KEY_LANE_X)) sp.getInt(KEY_LANE_X, 0) else null
         val laneY = if (sp.contains(KEY_LANE_Y)) sp.getInt(KEY_LANE_Y, 0) else null
+        val legacyCycleRaw = sp.getString(KEY_CYCLE_MODES, null)
+        val primaryModes = if (sp.contains(KEY_PRIMARY_CYCLE_MODES)) {
+            GeelyClusterCenterMode.parsePrimaryModes(sp.getString(KEY_PRIMARY_CYCLE_MODES, null))
+        } else if (!legacyCycleRaw.isNullOrBlank()) {
+            GeelyClusterCenterMode.parsePrimaryModes(legacyCycleRaw)
+        } else {
+            GeelyClusterCenterMode.DEFAULT_PRIMARY_MODES
+        }
+        val telemetryModes = if (sp.contains(KEY_TELEMETRY_CYCLE_MODES)) {
+            GeelyClusterCenterMode.parseTelemetryModes(sp.getString(KEY_TELEMETRY_CYCLE_MODES, null))
+        } else if (!legacyCycleRaw.isNullOrBlank()) {
+            GeelyClusterCenterMode.parseTelemetryModes(legacyCycleRaw)
+        } else {
+            GeelyClusterCenterMode.DEFAULT_TELEMETRY_MODES
+        }
+        val defaultPrimaryKey = if (EcarxKx11HeadUnit.detected) EcarxKx11WheelKeys.KEY_WECHAT else 0
+        val primaryKeyCode = sp.getInt(KEY_CENTER_SWITCH_KEY_CODE, defaultPrimaryKey)
+        val telemetryKeyCode = sp.getInt(KEY_TELEMETRY_SWITCH_KEY_CODE, 0)
+        val primaryTrigger = GeelyClusterSwitchTrigger.fromName(
+            sp.getString(KEY_CENTER_SWITCH_TRIGGER, null),
+            defaultValue = GeelyClusterSwitchTrigger.SINGLE_CLICK,
+        )
+        val rawTelemetryTrigger = GeelyClusterSwitchTrigger.fromName(
+            sp.getString(KEY_TELEMETRY_SWITCH_TRIGGER, null),
+            defaultValue = GeelyClusterSwitchTrigger.LONG_PRESS,
+        )
+        val sharesKey = primaryKeyCode > 0 && (telemetryKeyCode <= 0 || telemetryKeyCode == primaryKeyCode)
+        val telemetryTrigger = if (sharesKey && rawTelemetryTrigger == primaryTrigger) {
+            when (primaryTrigger) {
+                GeelyClusterSwitchTrigger.SINGLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
+                GeelyClusterSwitchTrigger.LONG_PRESS -> GeelyClusterSwitchTrigger.DOUBLE_CLICK
+                GeelyClusterSwitchTrigger.DOUBLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
+            }
+        } else {
+            rawTelemetryTrigger
+        }
         return GeelySelfDrawConfig(
             hudEnabled = sp.getBoolean(KEY_HUD_ENABLED, true),
             cardEnabled = sp.getBoolean(KEY_CARD_ENABLED, true),
@@ -281,14 +371,21 @@ internal object GeelyClusterPrefs {
             launchThemeOnStart = sp.getBoolean(KEY_LAUNCH_THEME_ON_START, false),
             preferredDisplayId = sp.getInt(KEY_DISPLAY_ID, 2),
             centerMode = GeelyClusterCenterMode.fromName(sp.getString(KEY_CENTER_MODE, null)),
-            centerSwitchKeyCode = sp.getInt(KEY_CENTER_SWITCH_KEY_CODE, 0),
-            centerSwitchTrigger = GeelyClusterSwitchTrigger.fromName(sp.getString(KEY_CENTER_SWITCH_TRIGGER, null)),
-            cycleModes = GeelyClusterCenterMode.parseCycleModes(sp.getString(KEY_CYCLE_MODES, null)),
+            centerSwitchKeyCode = primaryKeyCode,
+            centerSwitchTrigger = primaryTrigger,
+            primaryCycleModes = primaryModes,
+            telemetrySwitchKeyCode = telemetryKeyCode,
+            telemetrySwitchTrigger = telemetryTrigger,
+            telemetryCycleModes = telemetryModes,
             tireAlertPopupEnabled = sp.getBoolean(KEY_TIRE_ALERT_POPUP_ENABLED, true),
             navAutoReturnSeconds = sp.getInt(
                 KEY_NAV_AUTO_RETURN_SECONDS,
                 GeelySelfDrawConfig.DEFAULT_NAV_AUTO_RETURN_SECONDS,
             ).coerceIn(0, 60),
+            interceptVoiceKeyForSiri = sp.getBoolean(
+                KEY_INTERCEPT_VOICE_KEY_FOR_SIRI,
+                EcarxKx11HeadUnit.detected,
+            ),
         )
     }
 
@@ -316,9 +413,14 @@ internal object GeelyClusterPrefs {
             .putString(KEY_CENTER_MODE, config.centerMode.name)
             .putInt(KEY_CENTER_SWITCH_KEY_CODE, config.centerSwitchKeyCode)
             .putString(KEY_CENTER_SWITCH_TRIGGER, config.centerSwitchTrigger.name)
+            .putString(KEY_PRIMARY_CYCLE_MODES, GeelyClusterCenterMode.serializePrimaryModes(config.primaryCycleModes))
+            .putInt(KEY_TELEMETRY_SWITCH_KEY_CODE, config.telemetrySwitchKeyCode)
+            .putString(KEY_TELEMETRY_SWITCH_TRIGGER, config.telemetrySwitchTrigger.name)
+            .putString(KEY_TELEMETRY_CYCLE_MODES, GeelyClusterCenterMode.serializeTelemetryModes(config.telemetryCycleModes))
             .putString(KEY_CYCLE_MODES, GeelyClusterCenterMode.serializeCycleModes(config.cycleModes))
             .putBoolean(KEY_TIRE_ALERT_POPUP_ENABLED, config.tireAlertPopupEnabled)
             .putInt(KEY_NAV_AUTO_RETURN_SECONDS, config.navAutoReturnSeconds.coerceIn(0, 60))
+            .putBoolean(KEY_INTERCEPT_VOICE_KEY_FOR_SIRI, config.interceptVoiceKeyForSiri)
         writeArea(editor, "hud", config.hudArea.clamp())
         writeArea(editor, "card", config.cardArea.clamp())
         writeArea(editor, "fullscreen_card", config.fullscreenCardArea.clamp())
