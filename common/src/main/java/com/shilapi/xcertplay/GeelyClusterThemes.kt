@@ -31,6 +31,12 @@ internal class GeelyUltraThemeRenderer(context: Context) {
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    private val sansBold = Typeface.create("sans-serif", Typeface.BOLD)
+    private val sansLight = Typeface.create("sans-serif-light", Typeface.NORMAL)
+    private val sansBoldItalic = Typeface.create("sans-serif", Typeface.BOLD_ITALIC)
+    private val sansMedium = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    private val monoBold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+
     private val clockTimeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val clockDateZhFormatter = SimpleDateFormat("M月d日  ·  EEEE", Locale.CHINA)
     private val clockDateIntlFormatter = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
@@ -132,19 +138,18 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         val timeColor = if (useLightPalette) Color.rgb(24, 32, 44) else Color.argb(246, 248, 250, 252)
         val dateColor = if (useLightPalette) Color.rgb(71, 85, 105) else Color.argb(210, 203, 213, 225)
 
-        val timeTypeface = when (style) {
-            GeelyClusterThemeStyle.PHANTOM_STEALTH -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            GeelyClusterThemeStyle.AERO_MECHA,
-            GeelyClusterThemeStyle.HYPER_WING -> Typeface.create("sans-serif", Typeface.BOLD_ITALIC)
-            GeelyClusterThemeStyle.ORBIT_RADAR -> Typeface.create("sans-serif-light", Typeface.NORMAL)
-            GeelyClusterThemeStyle.VALKYRIE_HEX,
-            GeelyClusterThemeStyle.TITAN_CORE -> Typeface.create("sans-serif", Typeface.BOLD)
+        val spec = GeelyClusterThemeSpecs.of(style)
+        val timeTypeface = when (spec.clockFont) {
+            GeelyDialFont.SANS_BOLD -> sansBold
+            GeelyDialFont.SANS_LIGHT -> sansLight
+            GeelyDialFont.SANS_BOLD_ITALIC -> sansBoldItalic
+            GeelyDialFont.MONO_BOLD -> monoBold
         }
-        val dateTypeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        val dateTypeface = monoBold
 
         // Theme-specific subtle framing accents around the center clock
-        when (style) {
-            GeelyClusterThemeStyle.AERO_MECHA -> {
+        when (spec.clockFrame) {
+            GeelyClockFrameStyle.SQUARE_BRACKETS -> {
                 strokePaint.strokeWidth = 2.2f
                 strokePaint.strokeCap = Paint.Cap.ROUND
                 strokePaint.color = withAlpha(accentColor, if (useLightPalette) 145 else 150)
@@ -155,10 +160,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
                 canvas.drawLine(centerX + 186f, 234f, centerX + 186f, 420f, strokePaint)
                 canvas.drawLine(centerX + 186f, 420f, centerX + 166f, 420f, strokePaint)
             }
-            GeelyClusterThemeStyle.HYPER_WING,
-            GeelyClusterThemeStyle.VALKYRIE_HEX,
-            GeelyClusterThemeStyle.TITAN_CORE,
-            GeelyClusterThemeStyle.PHANTOM_STEALTH -> {
+            GeelyClockFrameStyle.CHAMFERED_BRACKETS -> {
                 strokePaint.strokeWidth = 2.2f
                 strokePaint.strokeCap = Paint.Cap.ROUND
                 strokePaint.color = withAlpha(accentColor, if (useLightPalette) 145 else 155)
@@ -171,7 +173,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
                 canvas.drawLine(centerX + 196f, 246f, centerX + 196f, 398f, strokePaint)
                 canvas.drawLine(centerX + 196f, 398f, centerX + 170f, 420f, strokePaint)
             }
-            GeelyClusterThemeStyle.ORBIT_RADAR -> {
+            GeelyClockFrameStyle.HORIZON_TICKS -> {
                 strokePaint.strokeWidth = 2.0f
                 strokePaint.strokeCap = Paint.Cap.ROUND
                 strokePaint.color = withAlpha(accentColor, if (useLightPalette) 145 else 150)
@@ -206,7 +208,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         // with the factory QNX bottom center song/status bar (`Y: 656..720`).
         val fuel = fuelText?.trim().orEmpty()
         if (fuel.isNotEmpty()) {
-            textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            textPaint.typeface = sansMedium
             textPaint.textSize = 20f
             textPaint.color = withAlpha(dateColor, if (useLightPalette) 210 else 190)
             canvas.drawText(fuel, centerX, dateBaseY + 52f, textPaint)
@@ -236,7 +238,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         if (title.isEmpty()) {
             val parts = listOf(fallbackTime, fallbackFuel).filter { it.isNotBlank() }
             if (parts.isEmpty()) return false
-            textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            textPaint.typeface = sansMedium
             textPaint.textSize = 21f
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.color = if (useLightPalette) Color.rgb(36, 44, 54) else Color.argb(232, 232, 238, 246)
@@ -254,7 +256,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         val textColor = if (useLightPalette) Color.rgb(24, 32, 42) else Color.argb(248, 248, 250, 253)
         val eqColor = if (useLightPalette) accentColor else withAlpha(accentColor, 245)
 
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        textPaint.typeface = sansMedium
         textPaint.textSize = 24f
         textPaint.textAlign = Paint.Align.LEFT
         val displayTitle = ellipsize(title, textPaint, 460f)

@@ -105,14 +105,8 @@ internal enum class GeelyClusterThemeStyle(
         supportsLightMode = true,
     );
 
-    fun defaultAccentColor(nightMode: Boolean): Int = when (this) {
-        AERO_MECHA -> if (nightMode) 0xFF00E5FF.toInt() else 0xFF0284C7.toInt()
-        HYPER_WING -> if (nightMode) 0xFFFF6B00.toInt() else 0xFFEA580C.toInt()
-        VALKYRIE_HEX -> if (nightMode) 0xFFA855F7.toInt() else 0xFF7C3AED.toInt()
-        ORBIT_RADAR -> if (nightMode) 0xFF22D3EE.toInt() else 0xFF0284C7.toInt()
-        TITAN_CORE -> if (nightMode) 0xFFF59E0B.toInt() else 0xFFB45309.toInt()
-        PHANTOM_STEALTH -> if (nightMode) 0xFF10B981.toInt() else 0xFF047857.toInt()
-    }
+    fun defaultAccentColor(nightMode: Boolean): Int =
+        GeelyClusterThemeSpecs.of(this).defaultAccentColor(nightMode)
 
     companion object {
         fun fromName(raw: String?): GeelyClusterThemeStyle =
