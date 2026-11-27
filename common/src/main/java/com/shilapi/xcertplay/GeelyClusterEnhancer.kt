@@ -170,8 +170,7 @@ internal object GeelyClusterEnhancer {
     private var carPlayHostAttached: Boolean = false
     private var carPlayTrackActive: Boolean = false
 
-    private fun ensureCarPlayMusicSubscription(context: Context) {
-        val app = context.applicationContext
+    private fun ensureCarPlayMusicSubscription() {
         if (musicSubscription != null) return
         runOnMain {
             if (musicSubscription != null) return@runOnMain
@@ -179,25 +178,23 @@ internal object GeelyClusterEnhancer {
                 val hasCarPlayTrack = snapshot.info.playing ||
                     !snapshot.info.title.isNullOrBlank() ||
                     (snapshot.artwork != null && !snapshot.artwork.isRecycled)
-                val wasTrackActive = carPlayTrackActive
                 carPlayTrackActive = hasCarPlayTrack
                 if (isFullScreenPresentationActive) {
                     currentFakeUltraView?.apply {
                         carPlayConnected = true
+                        carPlayMediaActive = hasCarPlayTrack
                         externalMediaActive = false
                         setArtwork(snapshot.artwork)
-                        setMusicInfo(snapshot.info.title, snapshot.info.playing, snapshot.info.artist)
+                        setMusicInfo(snapshot.info.title, snapshot.info.playing)
                     }
                 } else if (carPlayHostAttached && hasCarPlayTrack) {
                     // Support CarPlay album/lyrics on the persistent dual-dial theme even when
                     // the separate cluster map stream (`clusterEnabled`) is turned off.
-                    if (!wasTrackActive) {
-                        GeelyVehicleMediaObserver.stopExternalPlayback(app)
-                    }
                     currentFakeUltraView?.apply {
-                        externalMediaActive = true
+                        carPlayMediaActive = true
+                        externalMediaActive = false
                         setArtwork(snapshot.artwork)
-                        setMusicInfo(snapshot.info.title, snapshot.info.playing, snapshot.info.artist)
+                        setMusicInfo(snapshot.info.title, snapshot.info.playing)
                     }
                 } else if (!isFullScreenPresentationActive) {
                     applyVehicleMediaIfStandby()
@@ -475,7 +472,7 @@ internal object GeelyClusterEnhancer {
         ensureVehicleDayNightObserver(app)
         syncStandaloneOverlayWindow(app)
         syncPersistentThemeWindow(app, requestFullScreen = false)
-        ensureCarPlayMusicSubscription(app)
+        ensureCarPlayMusicSubscription()
     }
 
     /** Called in `CarPlayHostActivity.onDestroy`. */
@@ -687,10 +684,8 @@ internal object GeelyClusterEnhancer {
             invalidate()
         }
 
-        // Stop any lingering head-unit music session when CarPlay takes over the cluster.
-        GeelyVehicleMediaObserver.stopExternalPlayback(context.applicationContext)
         stopCarPlayMusicSubscription()
-        ensureCarPlayMusicSubscription(context.applicationContext)
+        ensureCarPlayMusicSubscription()
 
         val controller = ensureDimController(context)
         controller.forceReenterFullScreenMap("presentation-start")
@@ -751,8 +746,9 @@ internal object GeelyClusterEnhancer {
             currentFakeUltraView?.apply {
                 carPlayConnected = false
                 routeActive = false
+                carPlayMediaActive = carPlayTrackActive
                 if (carPlayTrackActive) {
-                    externalMediaActive = true
+                    externalMediaActive = false
                 }
                 invalidate()
             }
@@ -1938,8 +1934,8 @@ private class GeelyClusterSettingsPanel(
         )
         val hasNotifAccess = GeelyMediaNotificationListenerService.isEnabled(activity)
         val mediaPermBtn = createActionButton(
-            if (hasNotifAccess) "车机音乐与歌词读取权限已开启 · 管理通知使用权"
-            else "开启车机音乐与歌词读取权限 (网易云 / QQ 音乐 / 蓝牙)"
+            if (hasNotifAccess) "车机音乐封面读取权限已开启 · 管理通知使用权"
+            else "开启车机音乐封面读取权限 (网易云 / QQ 音乐 / 蓝牙)"
         ) {
             runCatching {
                 activity.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -1966,7 +1962,7 @@ private class GeelyClusterSettingsPanel(
         )
         container.addView(
             TextView(activity).apply {
-                text = "允许悬浮窗权限可提高独立导航与常驻仪表主题的兼容性；开启通知使用权后，不连 CarPlay 也能读取网易云、QQ 音乐与蓝牙音乐的专辑封面及实时歌词。"
+                text = "允许悬浮窗权限可提高独立导航与常驻仪表主题的兼容性；开启通知使用权后，不连 CarPlay 也能读取网易云、QQ 音乐与蓝牙音乐的专辑封面。"
                 setTextColor(colors.secondaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setPadding(0, dp(10), 0, 0)

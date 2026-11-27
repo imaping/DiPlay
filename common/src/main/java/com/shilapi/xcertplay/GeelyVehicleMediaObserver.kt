@@ -1,11 +1,8 @@
 package com.shilapi.xcertplay
 
 import android.app.Notification
-import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -17,7 +14,6 @@ import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.net.Uri
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -32,66 +28,24 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /**
- * Snapshot of active head-unit local/Bluetooth music playback (NetEase Cloud Music, QQ Music,
+ * Snapshot of active head-unit local/Bluetooth music artwork (NetEase Cloud Music, QQ Music,
  * Bluetooth A2DP/AVRCP, OEM media apps) used on the Geely cluster when CarPlay is not connected.
  */
 internal data class GeelyVehicleMediaSnapshot(
-    val title: String? = null,
-    val artist: String? = null,
-    val album: String? = null,
-    val lyricLine: String? = null,
     val artwork: Bitmap? = null,
     val playing: Boolean = false,
     val active: Boolean = false,
     val packageName: String? = null,
 ) {
-    val primaryLine: String?
-        get() = lyricLine?.takeIf { it.isNotBlank() } ?: title?.takeIf { it.isNotBlank() }
-
-    val secondaryLine: String?
-        get() {
-            val cleanTitle = title?.trim().orEmpty()
-            val cleanArtist = artist?.trim().orEmpty()
-            val cleanLyric = lyricLine?.trim().orEmpty()
-            return if (cleanLyric.isNotEmpty()) {
-                when {
-                    cleanTitle.isNotEmpty() && cleanArtist.isNotEmpty() && !cleanTitle.equals(cleanLyric, ignoreCase = true) ->
-                        "$cleanTitle · $cleanArtist"
-                    cleanTitle.isNotEmpty() && !cleanTitle.equals(cleanLyric, ignoreCase = true) ->
-                        cleanTitle
-                    cleanArtist.isNotEmpty() -> cleanArtist
-                    else -> null
-                }
-            } else {
-                cleanArtist.takeIf { it.isNotEmpty() }
-            }
-        }
-
-    val singleLineDisplay: String?
-        get() {
-            val cleanLyric = lyricLine?.trim().orEmpty()
-            if (cleanLyric.isNotEmpty()) return cleanLyric
-            val cleanTitle = title?.trim().orEmpty()
-            val cleanArtist = artist?.trim().orEmpty()
-            return when {
-                cleanTitle.isNotEmpty() && cleanArtist.isNotEmpty() &&
-                    !cleanTitle.contains(cleanArtist, ignoreCase = true) -> "$cleanTitle · $cleanArtist"
-                cleanTitle.isNotEmpty() -> cleanTitle
-                cleanArtist.isNotEmpty() -> cleanArtist
-                else -> null
-            }
-        }
-
     val hasContent: Boolean
-        get() = active && (primaryLine != null || (artwork != null && !artwork.isRecycled))
+        get() = active && artwork != null && !artwork.isRecycled
 }
 
 /**
  * Lightweight NotificationListenerService enabling:
  * 1. Authorized [MediaSessionManager.getActiveSessions] access for NetEase Cloud Music, QQ Music,
  *    Bluetooth AVRCP, and other head-unit music apps.
- * 2. Real-time status-bar lyrics (`notification.tickerText`) and fallback album artwork icons
- *    pushed by NetEase Cloud Music / QQ Music when status-bar lyrics are enabled.
+ * 2. Fallback album artwork icons from media notifications.
  */
 class GeelyMediaNotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
@@ -142,13 +96,12 @@ class GeelyMediaNotificationListenerService : NotificationListenerService() {
 
 /**
  * Observes head-unit native music apps (NetEase Cloud Music, QQ Music, Bluetooth music, etc.)
- * via [MediaSessionManager], [GeelyMediaNotificationListenerService] status-bar lyrics, and
- * legacy Android music broadcasts as a zero-permission fallback.
+ * via [MediaSessionManager] and [GeelyMediaNotificationListenerService] for cluster album artwork
+ * when CarPlay is not connected.
  */
 internal object GeelyVehicleMediaObserver {
     private const val TAG = "GeelyVehicleMedia"
     private const val PAUSED_RETENTION_MS = 12_000L
-    private const val LYRIC_FRESH_MS = 30_000L
     private const val MAX_ARTWORK_DIM_PX = 320
     private const val MAX_URI_CACHE_ENTRIES = 6
 
@@ -172,23 +125,6 @@ internal object GeelyVehicleMediaObserver {
         "music",
     )
 
-    private val IGNORED_TICKER_PHRASES = setOf(
-        "网易云音乐",
-        "qq音乐",
-        "爱趣听",
-        "酷我音乐",
-        "酷狗音乐",
-        "蓝牙音乐",
-        "正在播放",
-        "播放中",
-        "已暂停",
-    )
-
-    private data class NotifLyricEntry(
-        val text: String,
-        val updatedAtMs: Long,
-    )
-
     private val lock = Any()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val ioExecutor = Executors.newSingleThreadExecutor { r ->
@@ -198,24 +134,14 @@ internal object GeelyVehicleMediaObserver {
     private val observers = linkedMapOf<Any, (GeelyVehicleMediaSnapshot) -> Unit>()
     private var appContext: Context? = null
     private var logger: (String) -> Unit = {}
-    private var started = false
 
     // Active MediaSession tracking
     private var sessionManager: MediaSessionManager? = null
     private var sessionsListenerRegistered = false
     private val trackedControllers = linkedMapOf<MediaController, MediaController.Callback>()
 
-    // Notification-sourced real-time lyrics & fallback icons keyed by package name
-    private val notifLyricsByPkg = HashMap<String, NotifLyricEntry>()
+    // Notification-sourced fallback album icons keyed by package name
     private val notifArtworkByPkg = HashMap<String, Bitmap>()
-
-    // Legacy broadcast fallback state
-    private var broadcastReceiverRegistered = false
-    private var broadcastTitle: String? = null
-    private var broadcastArtist: String? = null
-    private var broadcastAlbum: String? = null
-    private var broadcastPlaying: Boolean = false
-    private var broadcastUpdatedAtMs: Long = 0L
 
     // Artwork URI decode cache (bounded LRU-style LinkedHashMap)
     private val uriBitmapCache = LinkedHashMap<String, Bitmap>(MAX_URI_CACHE_ENTRIES + 1, 0.75f, true)
@@ -276,54 +202,6 @@ internal object GeelyVehicleMediaObserver {
         recomputeAndPublish()
     }
 
-    /**
-     * Gracefully sends `TransportControls.stop()` to active external head-unit music sessions
-     * (e.g. NetEase Cloud Music, QQ Music) when CarPlay takes over playback, preventing stale
-     * paused tracks from lingering on the factory QNX bottom media bar.
-     */
-    fun stopExternalPlayback(context: Context) {
-        val app = context.applicationContext
-        val ownPkg = app.packageName
-        val controllers = synchronized(lock) {
-            if (trackedControllers.isNotEmpty()) {
-                trackedControllers.keys.toList()
-            } else {
-                emptyList()
-            }
-        }
-        val targets = if (controllers.isNotEmpty()) {
-            controllers
-        } else if (GeelyMediaNotificationListenerService.isEnabled(app)) {
-            runCatching {
-                val mgr = app.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
-                mgr?.getActiveSessions(GeelyMediaNotificationListenerService.componentName(app))
-                    .orEmpty()
-                    .filter { it.packageName != ownPkg }
-            }.getOrDefault(emptyList())
-        } else {
-            emptyList()
-        }
-
-        for (ctrl in targets) {
-            val state = ctrl.playbackState?.state ?: PlaybackState.STATE_NONE
-            if (state == PlaybackState.STATE_PLAYING ||
-                state == PlaybackState.STATE_PAUSED ||
-                state == PlaybackState.STATE_BUFFERING
-            ) {
-                runCatching {
-                    ctrl.transportControls.stop()
-                    emitLog("GeelyVehicleMedia: sent stop() to ${ctrl.packageName} (prevState=$state)")
-                }
-            }
-        }
-        synchronized(lock) {
-            broadcastPlaying = false
-            pausedSinceElapsedMs = 0L
-            clearRetainedArtworkLocked()
-        }
-        recomputeAndPublish()
-    }
-
     internal fun onNotificationListenerConnected(context: Context) {
         val app = context.applicationContext
         synchronized(lock) {
@@ -347,49 +225,28 @@ internal object GeelyVehicleMediaObserver {
         val pkg = sbn.packageName ?: return
         if (pkg == context.packageName) return
         val notification = sbn.notification ?: return
-        val isMediaNotif = isLikelyMediaNotification(pkg, notification)
-        if (!isMediaNotif) return
+        if (!isLikelyMediaNotification(pkg, notification)) return
 
-        var changed = false
-        val now = SystemClock.elapsedRealtime()
-
-        // 1. Extract status-bar real-time lyric from tickerText (NetEase Cloud Music / QQ Music)
-        val rawTicker = notification.tickerText?.toString()?.trim().orEmpty()
-        val cleanedTicker = sanitizeLyricCandidate(rawTicker)
-        if (cleanedTicker != null) {
-            synchronized(lock) {
-                val prev = notifLyricsByPkg[pkg]
-                if (prev == null || prev.text != cleanedTicker) {
-                    notifLyricsByPkg[pkg] = NotifLyricEntry(cleanedTicker, now)
-                    changed = true
-                } else {
-                    notifLyricsByPkg[pkg] = prev.copy(updatedAtMs = now)
-                }
-            }
-        }
-
-        // 2. Extract fallback album art from notification large icon
         val largeBitmap = extractNotificationLargeBitmap(context, notification)
         if (largeBitmap != null && !largeBitmap.isRecycled) {
-            synchronized(lock) {
+            val changed = synchronized(lock) {
                 if (notifArtworkByPkg[pkg] !== largeBitmap) {
                     notifArtworkByPkg[pkg] = largeBitmap
-                    changed = true
+                    true
+                } else {
+                    false
                 }
             }
-        }
-
-        if (changed) {
-            recomputeAndPublish()
+            if (changed) {
+                recomputeAndPublish()
+            }
         }
     }
 
     internal fun onNotificationRemoved(sbn: StatusBarNotification) {
         val pkg = sbn.packageName ?: return
-        var changed = false
-        synchronized(lock) {
-            if (notifLyricsByPkg.remove(pkg) != null) changed = true
-            if (notifArtworkByPkg.remove(pkg) != null) changed = true
+        val changed = synchronized(lock) {
+            notifArtworkByPkg.remove(pkg) != null
         }
         if (changed) {
             recomputeAndPublish()
@@ -397,19 +254,12 @@ internal object GeelyVehicleMediaObserver {
     }
 
     private fun ensureStartedLocked(app: Context) {
-        if (!started) {
-            started = true
-            registerBroadcastFallbackLocked(app)
-        }
         attachMediaSessionListenerLocked(app)
     }
 
     private fun stopLocked() {
-        started = false
         mainHandler.removeCallbacks(pauseExpiryTick)
         detachMediaSessionListenerLocked()
-        unregisterBroadcastFallbackLocked()
-        notifLyricsByPkg.clear()
         notifArtworkByPkg.clear()
         pausedSinceElapsedMs = 0L
         pendingArtworkUri = null
@@ -493,72 +343,6 @@ internal object GeelyVehicleMediaObserver {
         }
     }
 
-    private val legacyBroadcastReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val action = intent.action ?: return
-            val title = intent.getStringExtra("track")
-                ?: intent.getStringExtra("title")
-                ?: intent.getStringExtra("song")
-            val artist = intent.getStringExtra("artist")
-                ?: intent.getStringExtra("singer")
-            val album = intent.getStringExtra("album")
-            val hasPlayingExtra = intent.hasExtra("playing") || intent.hasExtra("isplaying")
-            val playingExtra = when {
-                intent.hasExtra("playing") -> intent.getBooleanExtra("playing", false)
-                intent.hasExtra("isplaying") -> intent.getBooleanExtra("isplaying", false)
-                action.endsWith("metachanged", ignoreCase = true) -> true
-                else -> broadcastPlaying
-            }
-
-            synchronized(lock) {
-                if (!title.isNullOrBlank()) broadcastTitle = title.trim()
-                if (!artist.isNullOrBlank()) broadcastArtist = artist.trim()
-                if (!album.isNullOrBlank()) broadcastAlbum = album.trim()
-                if (hasPlayingExtra || action.endsWith("metachanged", ignoreCase = true)) {
-                    broadcastPlaying = playingExtra
-                }
-                broadcastUpdatedAtMs = SystemClock.elapsedRealtime()
-            }
-            recomputeAndPublish()
-        }
-    }
-
-    private fun registerBroadcastFallbackLocked(app: Context) {
-        if (broadcastReceiverRegistered) return
-        val filter = IntentFilter().apply {
-            addAction("com.android.music.metachanged")
-            addAction("com.android.music.playstatechanged")
-            addAction("com.netease.cloudmusic.metachanged")
-            addAction("com.netease.cloudmusic.playstatechanged")
-            addAction("com.tencent.qqmusic.metachanged")
-            addAction("com.tencent.qqmusic.playstatechanged")
-            addAction("com.tencent.qqmusic.ACTION_META_CHANGED")
-            addAction("com.tencent.qqmusic.ACTION_PLAY_STATE_CHANGED")
-            addAction("com.tencent.qqmusiccar.metachanged")
-            addAction("com.tencent.qqmusiccar.playstatechanged")
-            addAction("cn.kuwo.player.metachanged")
-            addAction("cn.kuwo.player.playstatechanged")
-        }
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                app.registerReceiver(legacyBroadcastReceiver, filter, Context.RECEIVER_EXPORTED)
-            } else {
-                @Suppress("DEPRECATION")
-                app.registerReceiver(legacyBroadcastReceiver, filter)
-            }
-            broadcastReceiverRegistered = true
-        }
-    }
-
-    private fun unregisterBroadcastFallbackLocked() {
-        if (!broadcastReceiverRegistered) return
-        val app = appContext
-        if (app != null) {
-            runCatching { app.unregisterReceiver(legacyBroadcastReceiver) }
-        }
-        broadcastReceiverRegistered = false
-    }
-
     private fun recomputeAndPublish() {
         val next = buildSnapshot()
         val listeners: List<(GeelyVehicleMediaSnapshot) -> Unit>
@@ -631,10 +415,6 @@ internal object GeelyVehicleMediaObserver {
                 }
 
                 val meta = selected.metadata
-                val title = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)
-                    ?.trim()?.takeIf { it.isNotEmpty() }
-                    ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-                        ?.trim()?.takeIf { it.isNotEmpty() }
                 val artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST)
                     ?.trim()?.takeIf { it.isNotEmpty() }
                     ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
@@ -643,12 +423,6 @@ internal object GeelyVehicleMediaObserver {
                         ?.trim()?.takeIf { it.isNotEmpty() }
                 val album = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM)
                     ?.trim()?.takeIf { it.isNotEmpty() }
-
-                val lyricEntry = notifLyricsByPkg[pkg]
-                val freshLyric = lyricEntry?.takeIf { now - it.updatedAtMs <= LYRIC_FRESH_MS }?.text
-                    ?.takeIf { lyric ->
-                        !lyric.equals(title.orEmpty(), ignoreCase = true)
-                    }
 
                 // Resolve artwork: MediaMetadata Bitmap -> MediaMetadata URI -> Notification LargeIcon -> Retained
                 var art = extractMetadataBitmap(meta)
@@ -688,36 +462,10 @@ internal object GeelyVehicleMediaObserver {
                 }
 
                 return@synchronized GeelyVehicleMediaSnapshot(
-                    title = title,
-                    artist = artist,
-                    album = album,
-                    lyricLine = freshLyric,
                     artwork = art,
                     playing = isPlaying,
                     active = true,
                     packageName = pkg,
-                )
-            }
-
-            // Fallback: legacy broadcast when MediaSessionManager is unavailable or empty
-            if (broadcastPlaying && !broadcastTitle.isNullOrBlank() &&
-                (now - broadcastUpdatedAtMs) <= 180_000L
-            ) {
-                pausedSinceElapsedMs = 0L
-                val anyFreshLyric = notifLyricsByPkg.values
-                    .filter { now - it.updatedAtMs <= LYRIC_FRESH_MS }
-                    .maxByOrNull { it.updatedAtMs }
-                    ?.text
-                val anyArt = notifArtworkByPkg.values.firstOrNull { !it.isRecycled }
-                return@synchronized GeelyVehicleMediaSnapshot(
-                    title = broadcastTitle,
-                    artist = broadcastArtist,
-                    album = broadcastAlbum,
-                    lyricLine = anyFreshLyric,
-                    artwork = anyArt,
-                    playing = true,
-                    active = true,
-                    packageName = "broadcast",
                 )
             }
 
@@ -873,26 +621,6 @@ internal object GeelyVehicleMediaObserver {
         return KNOWN_MUSIC_PACKAGE_HINTS.any { it in lower }
     }
 
-    private fun sanitizeLyricCandidate(raw: String): String? {
-        if (raw.isEmpty() || raw.length > 96) return null
-        val clean = raw.replace('\n', ' ').replace('\r', ' ').replace(Regex("\\s+"), " ").trim()
-        if (clean.isEmpty()) return null
-        val lower = clean.lowercase(Locale.ROOT)
-        if (lower in IGNORED_TICKER_PHRASES) return null
-        if (IGNORED_STATUS_SUBSTRINGS.any { it in clean }) return null
-        return clean
-    }
-
-    private val IGNORED_STATUS_SUBSTRINGS = listOf(
-        "正在运行",
-        "后台运行",
-        "运行中",
-        "点击返回",
-        "点击打开",
-        "点击进入",
-        "点击查看",
-    )
-
     private fun extractNotificationLargeBitmap(context: Context, notification: Notification): Bitmap? {
         runCatching {
             val icon = notification.getLargeIcon()
@@ -927,10 +655,6 @@ internal object GeelyVehicleMediaObserver {
     private fun snapshotsEqual(a: GeelyVehicleMediaSnapshot, b: GeelyVehicleMediaSnapshot): Boolean =
         a.active == b.active &&
             a.playing == b.playing &&
-            a.title == b.title &&
-            a.artist == b.artist &&
-            a.album == b.album &&
-            a.lyricLine == b.lyricLine &&
             a.artwork === b.artwork &&
             a.packageName == b.packageName
 

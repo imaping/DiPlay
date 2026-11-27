@@ -1034,6 +1034,14 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
         }
 
+    var carPlayMediaActive: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
     var externalMediaActive: Boolean = false
         set(value) {
             if (field != value) {
@@ -1049,7 +1057,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     private var artworkTransitionStartMs: Long = 0L
     private var dominantAlbumColor: Int? = null
     private var nowPlayingTitle: String? = null
-    private var nowPlayingSubtitle: String? = null
     private var nowPlayingActive: Boolean = false
 
     private val colorTransition = GeelyColorTransition(durationMs = 800L)
@@ -1092,10 +1099,9 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         invalidate()
     }
 
-    fun setMusicInfo(title: String?, playing: Boolean, subtitle: String? = null) {
-        if (nowPlayingTitle != title || nowPlayingSubtitle != subtitle || nowPlayingActive != playing) {
+    fun setMusicInfo(title: String?, playing: Boolean) {
+        if (nowPlayingTitle != title || nowPlayingActive != playing) {
             nowPlayingTitle = title
-            nowPlayingSubtitle = subtitle
             nowPlayingActive = playing
             invalidate()
         }
@@ -1103,14 +1109,10 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
 
     fun applyVehicleMedia(snapshot: GeelyVehicleMediaSnapshot) {
         val active = snapshot.hasContent
+        carPlayMediaActive = false
         externalMediaActive = active
-        if (!active) {
-            setArtwork(null)
-            setMusicInfo(null, false, null)
-            return
-        }
-        setArtwork(snapshot.artwork)
-        setMusicInfo(snapshot.singleLineDisplay, snapshot.playing, snapshot.secondaryLine)
+        setMusicInfo(null, false)
+        setArtwork(if (active) snapshot.artwork else null)
     }
 
     fun hasUsableArtwork(): Boolean = rawArtwork != null && rawArtwork?.isRecycled == false
@@ -1118,6 +1120,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     /** Clears CarPlay-only media/navigation state on phone disconnect while keeping dials running. */
     fun clearCarPlayData() {
         carPlayConnected = false
+        carPlayMediaActive = false
         routeActive = false
         externalMediaActive = false
         prevRawArtwork = null
@@ -1126,7 +1129,6 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         blurredArtwork = null
         dominantAlbumColor = null
         nowPlayingTitle = null
-        nowPlayingSubtitle = null
         nowPlayingActive = false
         invalidate()
     }
@@ -1189,7 +1191,8 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         val themeStyle = config.dialThemeStyle
 
         val hasCarPlayFeed = carPlayConnected || previewMode
-        val hasMediaFeed = hasCarPlayFeed || externalMediaActive
+        val hasCarPlayAudio = hasCarPlayFeed || carPlayMediaActive
+        val hasMediaFeed = hasCarPlayAudio || externalMediaActive
         val effectiveRouteActive = hasCarPlayFeed && routeActive
 
         // Resolve active dial accent color (`DEFAULT` / `SPEED` / `ALBUM`) with 800ms transition
@@ -1220,7 +1223,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             ?: if (previewMode) 6.8f else null
         val fuelText = if (avgFuel != null) String.format(Locale.US, "平均油耗 %.1f L/100km", avgFuel) else ""
         val activeSong = when {
-            !hasMediaFeed -> null
+            !hasCarPlayAudio -> null
             previewMode && effectiveRouteActive && nowPlayingTitle.isNullOrBlank() -> "阿拉斯加海湾"
             else -> nowPlayingTitle
         }
@@ -1320,9 +1323,10 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             canvas.restoreToCount(rightSave)
         }
 
-        // 4. Unified live lyrics / song bar (`baselineY = 622f`, cleanly above the factory QNX
-        //    bottom media strip at `Y ≈ 656..704`) across CarPlay, native music, map, album, and clock.
-        if (config.bottomBarEnabled) {
+        // 4. Bottom center CarPlay lyrics / song bar (`baselineY = 688f`).
+        //    Only drawn during CarPlay; when disconnected, leave the bottom center clear for the
+        //    factory head-unit media bar.
+        if (config.bottomBarEnabled && hasCarPlayAudio) {
             val showStatusFallback = !showingCenterClock && activeSong.isNullOrBlank()
             val timeText = if (showStatusFallback) timeFormatter.format(Date()) else ""
             val fallbackFuel = if (showStatusFallback) fuelText else ""
