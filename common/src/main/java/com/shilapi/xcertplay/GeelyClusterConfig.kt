@@ -39,11 +39,39 @@ internal enum class GeelyClusterCenterMode(
     AUTO("自动（地图 / 专辑 / 时钟）", "自动"),
     MAP("导航地图", "导航地图"),
     ALBUM("专辑封面", "专辑封面"),
-    CLOCK("大号数字时钟", "数字时钟");
+    CLOCK("大号数字时钟", "数字时钟"),
+    TRIP("本次行程", "本次行程"),
+    TIRE("胎压与胎温", "胎压胎温"),
+    VEHICLE_INFO("车辆综合信息", "综合车况");
+
+    val isTelemetryPage: Boolean
+        get() = this == TRIP || this == TIRE || this == VEHICLE_INFO
 
     companion object {
+        val CYCLE_ORDER: List<GeelyClusterCenterMode> = listOf(
+            MAP,
+            ALBUM,
+            CLOCK,
+            TRIP,
+            TIRE,
+            VEHICLE_INFO,
+        )
+
+        val DEFAULT_CYCLE_MODES: Set<GeelyClusterCenterMode> = CYCLE_ORDER.toSet()
+
         fun fromName(raw: String?): GeelyClusterCenterMode =
             entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: AUTO
+
+        fun parseCycleModes(raw: String?): Set<GeelyClusterCenterMode> {
+            if (raw.isNullOrBlank()) return DEFAULT_CYCLE_MODES
+            val parsed = raw.split(',')
+                .mapNotNull { token -> CYCLE_ORDER.firstOrNull { it.name.equals(token.trim(), ignoreCase = true) } }
+                .toCollection(LinkedHashSet())
+            return if (parsed.isEmpty()) setOf(CLOCK) else parsed
+        }
+
+        fun serializeCycleModes(modes: Set<GeelyClusterCenterMode>): String =
+            CYCLE_ORDER.filter { it in modes }.joinToString(",") { it.name }
     }
 }
 
@@ -168,6 +196,8 @@ internal data class GeelySelfDrawConfig(
     val centerMode: GeelyClusterCenterMode = GeelyClusterCenterMode.AUTO,
     val centerSwitchKeyCode: Int = 0,
     val centerSwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
+    val cycleModes: Set<GeelyClusterCenterMode> = GeelyClusterCenterMode.DEFAULT_CYCLE_MODES,
+    val tireAlertPopupEnabled: Boolean = true,
 ) {
     val hasAnySelfDrawOverlay: Boolean
         get() = hudEnabled || cardEnabled || fullscreenCardEnabled || laneEnabled || previewEnabled
@@ -200,6 +230,8 @@ internal object GeelyClusterPrefs {
     private const val KEY_CENTER_MODE = "self_draw_center_mode"
     private const val KEY_CENTER_SWITCH_KEY_CODE = "self_draw_center_switch_key_code"
     private const val KEY_CENTER_SWITCH_TRIGGER = "self_draw_center_switch_trigger"
+    private const val KEY_CYCLE_MODES = "self_draw_cycle_modes"
+    private const val KEY_TIRE_ALERT_POPUP_ENABLED = "self_draw_tire_alert_popup_enabled"
 
     fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -236,6 +268,8 @@ internal object GeelyClusterPrefs {
             centerMode = GeelyClusterCenterMode.fromName(sp.getString(KEY_CENTER_MODE, null)),
             centerSwitchKeyCode = sp.getInt(KEY_CENTER_SWITCH_KEY_CODE, 0),
             centerSwitchTrigger = GeelyClusterSwitchTrigger.fromName(sp.getString(KEY_CENTER_SWITCH_TRIGGER, null)),
+            cycleModes = GeelyClusterCenterMode.parseCycleModes(sp.getString(KEY_CYCLE_MODES, null)),
+            tireAlertPopupEnabled = sp.getBoolean(KEY_TIRE_ALERT_POPUP_ENABLED, true),
         )
     }
 
@@ -260,6 +294,8 @@ internal object GeelyClusterPrefs {
             .putString(KEY_CENTER_MODE, config.centerMode.name)
             .putInt(KEY_CENTER_SWITCH_KEY_CODE, config.centerSwitchKeyCode)
             .putString(KEY_CENTER_SWITCH_TRIGGER, config.centerSwitchTrigger.name)
+            .putString(KEY_CYCLE_MODES, GeelyClusterCenterMode.serializeCycleModes(config.cycleModes))
+            .putBoolean(KEY_TIRE_ALERT_POPUP_ENABLED, config.tireAlertPopupEnabled)
         writeArea(editor, "hud", config.hudArea.clamp())
         writeArea(editor, "card", config.cardArea.clamp())
         writeArea(editor, "fullscreen_card", config.fullscreenCardArea.clamp())

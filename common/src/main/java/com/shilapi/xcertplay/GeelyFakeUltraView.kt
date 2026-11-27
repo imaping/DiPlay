@@ -1069,9 +1069,13 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
 
     private val colorTransition = GeelyColorTransition(durationMs = 800L)
     private val ultraThemeRenderer = GeelyUltraThemeRenderer(context)
+    private val infoPageRenderer = GeelyClusterInfoPageRenderer()
 
     @Volatile
     private var sensorSnapshot = GeelyClusterSensorSnapshot()
+    @Volatile
+    private var telemetrySnapshot = GeelyVehicleTelemetrySnapshot()
+    private var telemetryPollTick: Int = 0
     private var pollFuture: ScheduledFuture<*>? = null
     private val pollInFlight = AtomicBoolean(false)
 
@@ -1166,6 +1170,11 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         invalidate()
     }
 
+    fun notifyPageSwitched(label: String, index: Int, total: Int) {
+        infoPageRenderer.triggerPageSwitchToast(label, index, total)
+        postInvalidateOnAnimation()
+    }
+
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         updatePollingState()
@@ -1182,18 +1191,26 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     }
 
     private fun updatePollingState() {
-        val shouldPoll = isAttachedToWindow && (config.dialLeftEnabled || config.dialRightEnabled || config.bottomBarEnabled)
+        val shouldPoll = isAttachedToWindow && !previewMode && (
+            config.dialLeftEnabled || config.dialRightEnabled || config.bottomBarEnabled ||
+                config.centerMode.isTelemetryPage || config.tireAlertPopupEnabled
+            )
         if (!shouldPoll) {
             stopPolling()
             return
         }
         if (pollFuture != null) return
+        telemetryPollTick = 0
         pollFuture = GeelyEcarxSensorReader.executor.scheduleWithFixedDelay(
             {
                 if (pollInFlight.compareAndSet(false, true)) {
                     try {
                         val snap = GeelyEcarxSensorReader.poll(context)
                         sensorSnapshot = snap
+                        val tick = telemetryPollTick++
+                        if (tick % 4 == 0) {
+                            telemetrySnapshot = GeelyVehicleTelemetryReader.poll(context)
+                        }
                         postInvalidateOnAnimation()
                     } finally {
                         pollInFlight.set(false)
@@ -1281,6 +1298,9 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                 else -> GeelyClusterCenterMode.CLOCK
             }
             GeelyClusterCenterMode.CLOCK -> GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.TRIP -> GeelyClusterCenterMode.TRIP
+            GeelyClusterCenterMode.TIRE -> GeelyClusterCenterMode.TIRE
+            GeelyClusterCenterMode.VEHICLE_INFO -> GeelyClusterCenterMode.VEHICLE_INFO
             GeelyClusterCenterMode.AUTO -> when {
                 effectiveRouteActive || hasNativeMap -> GeelyClusterCenterMode.MAP
                 config.albumArtEnabled && hasAlbumArt -> GeelyClusterCenterMode.ALBUM
@@ -1289,6 +1309,9 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         }
         val showingCenterMap = effectiveDisplayMode == GeelyClusterCenterMode.MAP
         val showingCenterClock = effectiveDisplayMode == GeelyClusterCenterMode.CLOCK
+        val showingCenterInfoPage = effectiveDisplayMode.isTelemetryPage
+        val activeTelemetry = if (previewMode) GeelyVehicleTelemetrySnapshot.previewDemo() else telemetrySnapshot
+        val compactForTopCard = effectiveRouteActive && config.fullscreenCardEnabled
 
         when (effectiveDisplayMode) {
             GeelyClusterCenterMode.ALBUM -> {
@@ -1302,6 +1325,39 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                 if (config.mapVignetteEnabled) {
                     ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = true)
                 }
+            }
+            GeelyClusterCenterMode.TRIP -> {
+                ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = false)
+                infoPageRenderer.drawTripPage(
+                    canvas = canvas,
+                    style = themeStyle,
+                    nightMode = nightMode,
+                    accentColor = currentAccent,
+                    telemetry = activeTelemetry,
+                    compactForTopCard = compactForTopCard,
+                )
+            }
+            GeelyClusterCenterMode.TIRE -> {
+                ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = false)
+                infoPageRenderer.drawTirePage(
+                    canvas = canvas,
+                    style = themeStyle,
+                    nightMode = nightMode,
+                    accentColor = currentAccent,
+                    telemetry = activeTelemetry,
+                    compactForTopCard = compactForTopCard,
+                )
+            }
+            GeelyClusterCenterMode.VEHICLE_INFO -> {
+                ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = false)
+                infoPageRenderer.drawVehicleInfoPage(
+                    canvas = canvas,
+                    style = themeStyle,
+                    nightMode = nightMode,
+                    accentColor = currentAccent,
+                    telemetry = activeTelemetry,
+                    compactForTopCard = compactForTopCard,
+                )
             }
             else -> {
                 ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = false)
@@ -1363,8 +1419,9 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         // 4. Bottom center CarPlay lyrics / song bar (`baselineY = 688f`).
         //    Only drawn during CarPlay; when disconnected, leave the bottom center clear for the
         //    factory head-unit media bar.
+        val nowUptime = SystemClock.uptimeMillis()
         if (config.bottomBarEnabled && hasCarPlayAudio) {
-            val showStatusFallback = !showingCenterClock && activeSong.isNullOrBlank()
+            val showStatusFallback = !showingCenterClock && !showingCenterInfoPage && activeSong.isNullOrBlank()
             val timeText = if (showStatusFallback) timeFormatter.format(Date()) else ""
             val fallbackFuel = if (showStatusFallback) fuelText else ""
             if (!activeSong.isNullOrBlank() || showStatusFallback) {
@@ -1375,13 +1432,32 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                         songTitle = activeSong?.takeIf { it.isNotBlank() },
                         isPlaying = activeSongPlaying,
                         accentColor = currentAccent,
-                        nowMs = SystemClock.uptimeMillis(),
+                        nowMs = nowUptime,
                         fallbackTime = timeText,
                         fallbackFuel = fallbackFuel,
                     )
                 ) {
                     needsNextFrame = true
                 }
+            }
+        }
+
+        // 5. Transient steering-wheel page switch toast & background TPMS alert banner
+        val toastAnimating = infoPageRenderer.drawPageSwitchToast(
+            canvas = canvas,
+            style = themeStyle,
+            nightMode = nightMode,
+            accentColor = currentAccent,
+            nowUptimeMs = nowUptime,
+        )
+        if (toastAnimating) {
+            needsNextFrame = true
+        } else if (!previewMode && config.tireAlertPopupEnabled &&
+            effectiveDisplayMode != GeelyClusterCenterMode.TIRE &&
+            activeTelemetry.tires.hasAnyAlert
+        ) {
+            activeTelemetry.tires.alertDescription()?.let { alertMsg ->
+                infoPageRenderer.drawTireAlertBanner(canvas, nightMode, alertMsg)
             }
         }
 

@@ -777,9 +777,9 @@ internal object GeelyClusterEnhancer {
     }
 
     /**
-     * Cycles the center display content between `MAP` (only when CarPlay or a native head-unit
-     * map projection is active on the cluster display), `ALBUM` (when album art is available),
-     * and `CLOCK` when triggered by the user's bound steering-wheel button.
+     * Cycles the center display content across the user-enabled pages in [GeelySelfDrawConfig.cycleModes]
+     * (`MAP`, `ALBUM`, `CLOCK`, `TRIP`, `TIRE`, `VEHICLE_INFO`), automatically skipping `MAP` when
+     * no map projection is active and skipping `ALBUM` when no artwork is available.
      */
     fun cycleCenterMode(context: Context): String {
         val app = context.applicationContext
@@ -791,10 +791,19 @@ internal object GeelyClusterEnhancer {
         val hasMediaAlbum = hasArtwork && (hasCarPlay || carPlayHostAttached || lastVehicleMediaSnapshot.hasContent)
         val routeNow = hasCarPlay && latestGuidance != null
 
-        val available = ArrayList<GeelyClusterCenterMode>(3)
-        if (hasMapSource) available.add(GeelyClusterCenterMode.MAP)
-        if (hasMediaAlbum) available.add(GeelyClusterCenterMode.ALBUM)
-        available.add(GeelyClusterCenterMode.CLOCK)
+        val enabledSet = cfg.cycleModes
+        val available = ArrayList<GeelyClusterCenterMode>(GeelyClusterCenterMode.CYCLE_ORDER.size)
+        for (mode in GeelyClusterCenterMode.CYCLE_ORDER) {
+            if (mode !in enabledSet) continue
+            when (mode) {
+                GeelyClusterCenterMode.MAP -> if (hasMapSource) available.add(mode)
+                GeelyClusterCenterMode.ALBUM -> if (hasMediaAlbum) available.add(mode)
+                else -> available.add(mode)
+            }
+        }
+        if (available.isEmpty()) {
+            available.add(GeelyClusterCenterMode.CLOCK)
+        }
 
         val currentVisible = when (cfg.centerMode) {
             GeelyClusterCenterMode.MAP -> when {
@@ -808,6 +817,9 @@ internal object GeelyClusterEnhancer {
                 else -> GeelyClusterCenterMode.CLOCK
             }
             GeelyClusterCenterMode.CLOCK -> GeelyClusterCenterMode.CLOCK
+            GeelyClusterCenterMode.TRIP -> GeelyClusterCenterMode.TRIP
+            GeelyClusterCenterMode.TIRE -> GeelyClusterCenterMode.TIRE
+            GeelyClusterCenterMode.VEHICLE_INFO -> GeelyClusterCenterMode.VEHICLE_INFO
             GeelyClusterCenterMode.AUTO -> when {
                 routeNow || hasNativeMap -> GeelyClusterCenterMode.MAP
                 cfg.albumArtEnabled && hasMediaAlbum -> GeelyClusterCenterMode.ALBUM
@@ -815,10 +827,12 @@ internal object GeelyClusterEnhancer {
             }
         }
 
-        val currentIdx = available.indexOf(currentVisible).coerceAtLeast(0)
-        val nextMode = available[(currentIdx + 1) % available.size]
+        val currentIdx = available.indexOf(currentVisible)
+        val nextIdx = if (currentIdx >= 0) (currentIdx + 1) % available.size else 0
+        val nextMode = available[nextIdx]
         GeelyClusterPrefs.save(app, cfg.copy(centerMode = nextMode))
         refreshConfig(app)
+        currentFakeUltraView?.notifyPageSwitched(nextMode.shortLabel, nextIdx, available.size)
         if (!hasCarPlay) {
             GeelyNativeClusterMapObserver.refreshNow()
         }

@@ -875,6 +875,7 @@ internal class GeelyClusterSettingsPanel(
                 3 -> {
                     addPermissionsCard(container)
                     addDisplayOutputCard(container)
+                    addVehicleSignalProbeCard(container)
                     addResetCard(container)
                 }
             }
@@ -897,6 +898,7 @@ internal class GeelyClusterSettingsPanel(
                 3 -> {
                     addPermissionsCard(container)
                     addDisplayOutputCard(container)
+                    addVehicleSignalProbeCard(container)
                     addResetCard(container)
                 }
             }
@@ -931,14 +933,9 @@ internal class GeelyClusterSettingsPanel(
         )
         host.addView(labelRow, matchWrap(bottomMargin = dp(6)))
         host.addView(
-            createSegmentedRow(
-                options = listOf(
-                    GeelyClusterCenterMode.AUTO to "自动",
-                    GeelyClusterCenterMode.MAP to "地图",
-                    GeelyClusterCenterMode.ALBUM to "专辑",
-                    GeelyClusterCenterMode.CLOCK to "时钟",
-                ),
+            createCenterModeGrid(
                 selected = config.centerMode,
+                compact = true,
                 heightDp = GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP,
             ) { mode ->
                 config = config.copy(centerMode = mode)
@@ -1275,14 +1272,10 @@ internal class GeelyClusterSettingsPanel(
 
         card.addView(createSubLabel("中央区域默认显示"), matchWrap(bottomMargin = dp(6)))
         card.addView(
-            createSegmentedRow(
-                options = listOf(
-                    GeelyClusterCenterMode.AUTO to "智能自动",
-                    GeelyClusterCenterMode.MAP to "导航地图",
-                    GeelyClusterCenterMode.ALBUM to "专辑封面",
-                    GeelyClusterCenterMode.CLOCK to "数字时钟",
-                ),
+            createCenterModeGrid(
                 selected = config.centerMode,
+                compact = false,
+                heightDp = GeelyUiDimens.SEGMENT_HEIGHT_DP,
             ) { mode ->
                 config = config.copy(centerMode = mode)
                 onConfigUpdated()
@@ -1295,9 +1288,36 @@ internal class GeelyClusterSettingsPanel(
             GeelyClusterCenterMode.MAP -> "中央区域始终保留透明窗口用于显示全屏导航地图。"
             GeelyClusterCenterMode.ALBUM -> "优先展示专辑封面与雾面模糊背景（无封面时自动回退为数字时钟）。"
             GeelyClusterCenterMode.CLOCK -> "始终显示大号数字时钟、日期与平均油耗。"
+            GeelyClusterCenterMode.TRIP -> "实时展示本次行程的里程、用时、平均速度、平均油耗与瞬时油耗。"
+            GeelyClusterCenterMode.TIRE -> "实时展示四轮胎压（kPa）与胎温（°C），异常轮胎自动高亮提醒。"
+            GeelyClusterCenterMode.VEHICLE_INFO -> "实时展示总里程、总平均油耗、剩余续航与油量、车内外温度、保养参考及累计统计。"
         }
-        card.addView(createHintText(centerHint), matchWrap(bottomMargin = dp(12)))
-        card.addView(createHairline(), matchWrap(bottomMargin = dp(12)))
+        card.addView(createHintText(centerHint), matchWrap(bottomMargin = dp(10)))
+
+        card.addView(
+            createActionButton("在中控屏查看车况与行程总览") {
+                GeelyVehicleStatusDialog.show(activity) { chosenMode ->
+                    config = config.copy(centerMode = chosenMode)
+                    onConfigUpdated()
+                    rebuildTabContent()
+                }
+            },
+            matchWrap(bottomMargin = dp(10)).apply {
+                height = dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP)
+            },
+        )
+
+        addFlatSwitchRow(
+            container = card,
+            title = "胎压 / 胎温异常自动提醒",
+            subtitle = "即使当前仪表停留在导航地图、专辑或时钟页，检测到任一轮胎胎压或胎温异常时也会在仪表顶部弹出警示条。",
+            checked = config.tireAlertPopupEnabled,
+        ) { checked ->
+            config = config.copy(tireAlertPopupEnabled = checked)
+            onConfigUpdated()
+        }
+
+        card.addView(createHairline(), matchWrap(topMargin = dp(6), bottomMargin = dp(12)))
 
         // Wheel key subcard
         val keyBox = createSubCard()
@@ -1396,9 +1416,64 @@ internal class GeelyClusterSettingsPanel(
             },
             LinearLayout.LayoutParams(dp(180), ViewGroup.LayoutParams.WRAP_CONTENT),
         )
-        keyBox.addView(triggerRow, matchWrap(bottomMargin = dp(8)))
+        keyBox.addView(triggerRow, matchWrap(bottomMargin = dp(10)))
+
+        // Configurable steering-wheel cycle pages
         keyBox.addView(
-            createHintText("在「导航地图 / 专辑封面 / 数字时钟」之间循环切换。若与短按 Siri 共用同一按键，建议使用「长按」触发，互不冲突。"),
+            TextView(activity).apply {
+                text = "方向盘循环包含的页面（点击勾选）"
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            },
+            matchWrap(bottomMargin = dp(6)),
+        )
+        val cycleRows = listOf(
+            listOf(
+                GeelyClusterCenterMode.MAP,
+                GeelyClusterCenterMode.ALBUM,
+                GeelyClusterCenterMode.CLOCK,
+            ),
+            listOf(
+                GeelyClusterCenterMode.TRIP,
+                GeelyClusterCenterMode.TIRE,
+                GeelyClusterCenterMode.VEHICLE_INFO,
+            ),
+        )
+        for ((rIdx, modes) in cycleRows.withIndex()) {
+            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+            for ((cIdx, mode) in modes.withIndex()) {
+                val enabled = mode in config.cycleModes
+                val label = if (enabled) "✓ ${mode.shortLabel}" else mode.shortLabel
+                val chip = createActionButton(label, selected = enabled) {
+                    val nextSet = LinkedHashSet(config.cycleModes)
+                    if (enabled) {
+                        if (nextSet.size <= 1) {
+                            Toast.makeText(activity, "至少保留 1 个循环页面", Toast.LENGTH_SHORT).show()
+                            return@createActionButton
+                        }
+                        nextSet.remove(mode)
+                    } else {
+                        nextSet.add(mode)
+                    }
+                    config = config.copy(cycleModes = nextSet)
+                    onConfigUpdated()
+                    rebuildTabContent()
+                }
+                row.addView(
+                    chip,
+                    LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                        if (cIdx > 0) marginStart = dp(6)
+                    },
+                )
+            }
+            keyBox.addView(
+                row,
+                matchWrap(bottomMargin = if (rIdx == cycleRows.lastIndex) dp(8) else dp(6)),
+            )
+        }
+
+        keyBox.addView(
+            createHintText("按动绑定按键将在以上已勾选页面间循环切换（无地图或无封面时自动跳过）。若与短按 Siri 共键，建议使用「长按」触发。"),
         )
         card.addView(keyBox)
         parent.addView(card, matchWrap(bottomMargin = dp(GeelyUiDimens.BLOCK_GAP_DP)))
@@ -1738,14 +1813,9 @@ internal class GeelyClusterSettingsPanel(
 
         // Quick center mode strip
         card.addView(
-            createSegmentedRow(
-                options = listOf(
-                    GeelyClusterCenterMode.AUTO to "自动",
-                    GeelyClusterCenterMode.MAP to "导航地图",
-                    GeelyClusterCenterMode.ALBUM to "专辑封面",
-                    GeelyClusterCenterMode.CLOCK to "数字时钟",
-                ),
+            createCenterModeGrid(
                 selected = config.centerMode,
+                compact = false,
                 heightDp = GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP,
             ) { mode ->
                 config = config.copy(centerMode = mode)
@@ -1845,6 +1915,14 @@ internal class GeelyClusterSettingsPanel(
         card.addView(
             createHintText("提示：上方「切至全屏仪表 / 恢复经典仪表」按钮可用于手动验证车机仪表模式切换通道是否响应。"),
             matchWrap(topMargin = dp(4)),
+        )
+        card.addView(
+            createActionButton("探测原车车况信号（胎压 / 行程 / 里程）") {
+                GeelyVehicleSignalProbeUi.showProbeDialog(activity)
+            },
+            matchWrap(topMargin = dp(10)).apply {
+                height = dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP)
+            },
         )
         parent.addView(card, matchWrap(bottomMargin = dp(GeelyUiDimens.BLOCK_GAP_DP)))
     }
@@ -2025,6 +2103,45 @@ internal class GeelyClusterSettingsPanel(
         )
         box.addView(row)
         card.addView(box)
+        parent.addView(card, matchWrap(bottomMargin = dp(GeelyUiDimens.BLOCK_GAP_DP)))
+    }
+
+    private fun addVehicleSignalProbeCard(parent: LinearLayout) {
+        val card = createSurfaceCard()
+        val row = LinearLayout(activity).apply {
+            orientation = if (isMediumScreen()) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val infoCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        infoCol.addView(createCardTitle("原车车况信号探测（只读）"))
+        infoCol.addView(
+            TextView(activity).apply {
+                text = "只读枚举实车 ECARX ISensor / ICarFunction / TripData 中的胎压、胎温、行程、总里程、续航与油耗通道，支持一键上传 R2 或本地保存。"
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setPadding(0, dp(3), 0, 0)
+            },
+        )
+        row.addView(
+            infoCol,
+            if (isMediumScreen()) {
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(12) }
+            } else {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { bottomMargin = dp(10) }
+            },
+        )
+        row.addView(
+            createPrimaryButton("开始探测") {
+                GeelyVehicleSignalProbeUi.showProbeDialog(activity)
+            },
+            if (isMediumScreen()) {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP))
+            } else {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP))
+            },
+        )
+        card.addView(row)
         parent.addView(card, matchWrap(bottomMargin = dp(GeelyUiDimens.BLOCK_GAP_DP)))
     }
 
@@ -2349,6 +2466,44 @@ internal class GeelyClusterSettingsPanel(
             },
             null,
         )
+    }
+
+    private fun createCenterModeGrid(
+        selected: GeelyClusterCenterMode,
+        compact: Boolean,
+        heightDp: Int,
+        onSelected: (GeelyClusterCenterMode) -> Unit,
+    ): LinearLayout {
+        val wrapper = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val row1 = if (compact) {
+            listOf(
+                GeelyClusterCenterMode.AUTO to "自动",
+                GeelyClusterCenterMode.MAP to "地图",
+                GeelyClusterCenterMode.ALBUM to "专辑",
+                GeelyClusterCenterMode.CLOCK to "时钟",
+            )
+        } else {
+            listOf(
+                GeelyClusterCenterMode.AUTO to "智能自动",
+                GeelyClusterCenterMode.MAP to "导航地图",
+                GeelyClusterCenterMode.ALBUM to "专辑封面",
+                GeelyClusterCenterMode.CLOCK to "数字时钟",
+            )
+        }
+        val row2 = listOf(
+            GeelyClusterCenterMode.TRIP to "本次行程",
+            GeelyClusterCenterMode.TIRE to "胎压胎温",
+            GeelyClusterCenterMode.VEHICLE_INFO to "综合车况",
+        )
+        wrapper.addView(
+            createSegmentedRow(options = row1, selected = selected, heightDp = heightDp, onSelected = onSelected),
+            matchWrap(bottomMargin = dp(6)),
+        )
+        wrapper.addView(
+            createSegmentedRow(options = row2, selected = selected, heightDp = heightDp, onSelected = onSelected),
+            matchWrap(),
+        )
+        return wrapper
     }
 
     private fun <T> createSegmentedRow(
