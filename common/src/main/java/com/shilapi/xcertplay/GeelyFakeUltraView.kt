@@ -1510,22 +1510,19 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         }
 
         // 4. Bottom center CarPlay lyrics / song bar (`baselineY = 688f`).
-        //    Only drawn during CarPlay; when disconnected, leave the bottom center clear for the
-        //    factory head-unit media bar. When the centered album lyrics theater is active, avoid
-        //    repeating the same lyric line at the bottom and fall back to time / fuel status.
-        if (config.bottomBarEnabled && hasCarPlayAudio) {
-            val barSong = if (showingCenterAlbumStage) null else activeSong
-            val barSongPlaying = !barSong.isNullOrBlank() && activeSongPlaying
-            val showStatusFallback = !showingCenterClock && !showingCenterInfoPage && barSong.isNullOrBlank()
+        //    Only drawn during CarPlay and hidden while the centered album lyrics theater is active
+        //    so CarPlay matches pure head-unit album mode cleanly without crowding the progress bar.
+        if (config.bottomBarEnabled && hasCarPlayAudio && !showingCenterAlbumStage) {
+            val showStatusFallback = !showingCenterClock && !showingCenterInfoPage && activeSong.isNullOrBlank()
             val timeText = if (showStatusFallback) timeFormatter.format(Date()) else ""
             val fallbackFuel = if (showStatusFallback) fuelText else ""
-            if (!barSong.isNullOrBlank() || showStatusFallback) {
+            if (!activeSong.isNullOrBlank() || showStatusFallback) {
                 if (ultraThemeRenderer.drawUltraBottomMusicBar(
                         canvas = canvas,
                         style = themeStyle,
                         nightMode = nightMode,
-                        songTitle = barSong?.takeIf { it.isNotBlank() },
-                        isPlaying = barSongPlaying,
+                        songTitle = activeSong?.takeIf { it.isNotBlank() },
+                        isPlaying = activeSongPlaying,
                         accentColor = currentAccent,
                         nowMs = nowUptime,
                         fallbackTime = timeText,

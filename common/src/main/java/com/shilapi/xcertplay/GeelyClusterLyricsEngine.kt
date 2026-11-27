@@ -110,6 +110,8 @@ internal class GeelyClusterLyricsEngine(
     private var currentTrack: GeelyClusterMediaTrack = GeelyClusterMediaTrack()
     private var trackIdentityKey: String = ""
     private var initialTrackTitle: String? = null
+    private var initialTitleIsLyricOrCredit: Boolean = false
+    private var matchedViaFallbackMeta: Boolean = false
     private var lastRawTitle: String? = null
     private var lastTitleUpdateUptimeMs: Long = 0L
 
@@ -163,6 +165,8 @@ internal class GeelyClusterLyricsEngine(
             currentTrack = GeelyClusterMediaTrack()
             trackIdentityKey = ""
             initialTrackTitle = null
+            initialTitleIsLyricOrCredit = false
+            matchedViaFallbackMeta = false
             lastRawTitle = null
             lastTitleUpdateUptimeMs = 0L
             streamLines.clear()
@@ -194,15 +198,18 @@ internal class GeelyClusterLyricsEngine(
             val cleanedTitle = next.title?.trim()?.takeIf { it.isNotEmpty() }
 
             if (isNewTrack) {
+                val looksLikeCredit = cleanedTitle != null && isLikelyCreditLine(cleanedTitle)
                 currentTrack = next
                 trackIdentityKey = buildTrackKey(next, cleanedTitle)
                 initialTrackTitle = cleanedTitle
+                initialTitleIsLyricOrCredit = looksLikeCredit
+                matchedViaFallbackMeta = false
                 lastRawTitle = cleanedTitle
                 lastTitleUpdateUptimeMs = nowUptime
                 streamLines.clear()
-                streamConfirmed = false
+                streamConfirmed = looksLikeCredit
                 streamAvgCadenceMs = 3_800L
-                lastStreamPushUptimeMs = 0L
+                lastStreamPushUptimeMs = if (looksLikeCredit) nowUptime else 0L
                 syncedLrcLines = emptyList()
                 syncedLrcTrackKey = ""
                 lastLookupAttemptKey = ""
@@ -310,8 +317,7 @@ internal class GeelyClusterLyricsEngine(
             val elapsedMs = track.estimatedElapsedMillis(nowElapsedMs)
             val durationMs = track.durationMillis?.takeIf { it > 0L }
 
-            val capsuleTitle = resolveCapsuleTitle(track)
-            val capsuleArtist = resolveCapsuleArtist(track)
+            val (capsuleTitle, capsuleArtist) = resolveCapsuleMeta(track)
 
             // 1. Prefer synced LRC when available and playback timeline is known
             val hasSyncedLrc = onlineLrcEnabled &&
@@ -392,25 +398,32 @@ internal class GeelyClusterLyricsEngine(
         }
     }
 
-    private fun resolveCapsuleTitle(track: GeelyClusterMediaTrack): String {
+    private fun resolveCapsuleMeta(track: GeelyClusterMediaTrack): Pair<String, String> {
         val seed = initialTrackTitle?.trim().orEmpty()
-        if (seed.isNotEmpty()) {
-            // If seed looks like "Song - Artist" and artist is already separate, keep clean part
-            return seed
-        }
-        return track.title?.trim().orEmpty().ifEmpty { track.album?.trim().orEmpty() }
-    }
-
-    private fun resolveCapsuleArtist(track: GeelyClusterMediaTrack): String {
         val artist = track.artist?.trim().orEmpty()
         val album = track.album?.trim().orEmpty()
-        return when {
+        val hideSeedTitle = initialTitleIsLyricOrCredit ||
+            matchedViaFallbackMeta ||
+            (streamConfirmed && seed.isNotEmpty() && isLikelyLyricSentence(seed))
+
+        if (hideSeedTitle && (artist.isNotEmpty() || album.isNotEmpty())) {
+            return when {
+                artist.isNotEmpty() && album.isNotEmpty() && !album.equals(artist, ignoreCase = true) ->
+                    artist to album
+                artist.isNotEmpty() -> artist to ""
+                else -> album to ""
+            }
+        }
+
+        val title = seed.ifEmpty { track.title?.trim().orEmpty().ifEmpty { album } }
+        val sub = when {
             artist.isNotEmpty() && album.isNotEmpty() && !album.equals(artist, ignoreCase = true) &&
-                !album.equals(initialTrackTitle, ignoreCase = true) -> "$artist · $album"
-            artist.isNotEmpty() -> artist
-            album.isNotEmpty() && !album.equals(initialTrackTitle, ignoreCase = true) -> album
+                !album.equals(title, ignoreCase = true) -> "$artist · $album"
+            artist.isNotEmpty() && !artist.equals(title, ignoreCase = true) -> artist
+            album.isNotEmpty() && !album.equals(title, ignoreCase = true) -> album
             else -> ""
         }
+        return title to sub
     }
 
     private fun isTrackChanged(
@@ -469,42 +482,69 @@ internal class GeelyClusterLyricsEngine(
         seedTitle: String?,
     ) {
         val rawTitle = (seedTitle ?: track.title)?.trim().orEmpty()
-        if (rawTitle.isEmpty()) return
-        // Avoid querying obvious long sentence lyrics as song titles when artist is missing
         val artist = track.artist?.trim().orEmpty()
-        if (artist.isEmpty() && rawTitle.length > 26) return
+        val album = track.album?.trim().orEmpty()
+        val skipRawTitle = rawTitle.isEmpty() ||
+            isLikelyCreditLine(rawTitle) ||
+            (artist.isEmpty() && album.isEmpty() && rawTitle.length > 26)
 
-        val cleanTitle = stripTitleDecorations(rawTitle, artist)
-        if (cleanTitle.isEmpty()) return
+        val candidates = ArrayList<GeelyLrcQueryCandidate>(3)
+        val seenKeys = HashSet<String>(4)
+        fun addCandidate(qTitle: String, qArtist: String, qAlbum: String, isFallback: Boolean) {
+            val clean = stripTitleDecorations(qTitle, qArtist)
+            if (clean.isEmpty()) return
+            val key = buildCacheKey(clean, qArtist, track.durationMillis)
+            if (seenKeys.add(key)) {
+                candidates.add(GeelyLrcQueryCandidate(key, clean, qArtist, qAlbum, isFallback))
+            }
+        }
 
-        val cacheKey = buildCacheKey(cleanTitle, artist, track.durationMillis)
+        if (!skipRawTitle) {
+            addCandidate(rawTitle, artist, album, isFallback = false)
+        }
+        // CarPlay QQ Music / NetEase Bluetooth-lyrics mode often puts lyric in `title`,
+        // real song title in `artist`, and singer name in `album` (or `album` = title, `artist` = singer).
+        if (artist.isNotBlank() && album.isNotBlank() && !artist.equals(rawTitle, ignoreCase = true)) {
+            addCandidate(artist, album, "", isFallback = true)
+        }
+        if (album.isNotBlank() && !album.equals(rawTitle, ignoreCase = true) && !album.equals(artist, ignoreCase = true)) {
+            addCandidate(album, artist, "", isFallback = true)
+        }
+        if (candidates.isEmpty() && artist.isNotBlank() && skipRawTitle) {
+            addCandidate(artist, "", "", isFallback = true)
+        }
+        if (candidates.isEmpty()) return
+
         synchronized(lock) {
             if (!onlineLrcEnabled || trackIdentityKey != expectedTrackKey) return
             lastLookupAttemptKey = buildTrackKey(track, seedTitle)
         }
 
-        // Fast-path: check memory cache synchronously
-        val cached = GeelyOnlineLrcRepository.getMemoryCached(cacheKey)
-        if (cached != null) {
-            applyFetchedLrc(expectedTrackKey, cached)
-            return
+        // Fast-path: check memory cache across candidates synchronously
+        for (cand in candidates) {
+            val cached = GeelyOnlineLrcRepository.getMemoryCached(cand.cacheKey)
+            if (cached != null && cached.size >= 2) {
+                applyFetchedLrc(expectedTrackKey, cached, cand.isFallback)
+                return
+            }
         }
 
-        GeelyOnlineLrcRepository.fetchAsync(
+        GeelyOnlineLrcRepository.fetchCandidatesAsync(
             context = appContext,
-            cacheKey = cacheKey,
-            title = cleanTitle,
-            artist = artist,
-            album = track.album?.trim().orEmpty(),
+            candidates = candidates,
             durationMs = track.durationMillis,
-        ) { lines ->
+        ) { lines, usedFallback ->
             if (lines.isNotEmpty()) {
-                applyFetchedLrc(expectedTrackKey, lines)
+                applyFetchedLrc(expectedTrackKey, lines, usedFallback)
             }
         }
     }
 
-    private fun applyFetchedLrc(expectedTrackKey: String, lines: List<GeelyLyricLine>) {
+    private fun applyFetchedLrc(
+        expectedTrackKey: String,
+        lines: List<GeelyLyricLine>,
+        usedFallbackMeta: Boolean,
+    ) {
         if (lines.size < 2) return
         val applied = synchronized(lock) {
             if (!onlineLrcEnabled || trackIdentityKey != expectedTrackKey) {
@@ -512,6 +552,9 @@ internal class GeelyClusterLyricsEngine(
             } else {
                 syncedLrcLines = lines
                 syncedLrcTrackKey = expectedTrackKey
+                if (usedFallbackMeta) {
+                    matchedViaFallbackMeta = true
+                }
                 true
             }
         }
@@ -530,6 +573,22 @@ internal class GeelyClusterLyricsEngine(
 
     companion object {
         private const val MAX_STREAM_LINES = 40
+        private val CREDIT_LINE_PATTERN: Pattern = Pattern.compile(
+            "^(作词|作曲|词曲|词|曲|编曲|制作人?|监制|统筹|出品人?|发行|混音|母带|录音|吉他|贝斯|鼓手?|钢琴|弦乐|和声|配唱|企划|宣发|宣传|文案|原唱|翻唱|演唱|人声|剪辑|策划|OP|SP|Lyricist|Composer|Arranger|Producer)\\s*[:：\\-]",
+            Pattern.CASE_INSENSITIVE,
+        )
+
+        private fun isLikelyCreditLine(raw: String): Boolean =
+            CREDIT_LINE_PATTERN.matcher(raw.trim()).find()
+
+        private fun isLikelyLyricSentence(raw: String): Boolean {
+            val s = raw.trim()
+            if (isLikelyCreditLine(s)) return true
+            if (s.length >= 16 && (s.contains(' ') || s.contains('，') || s.contains(',') || s.contains('。'))) {
+                return true
+            }
+            return false
+        }
 
         private fun normalizeQueryPart(raw: String?): String =
             raw?.trim()?.lowercase(Locale.ROOT)?.replace(Regex("\\s+"), " ").orEmpty()
@@ -556,6 +615,14 @@ internal class GeelyClusterLyricsEngine(
     }
 }
 
+internal data class GeelyLrcQueryCandidate(
+    val cacheKey: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val isFallback: Boolean,
+)
+
 /**
  * Lightweight HTTPS LRC repository with in-memory LRU + disk cache.
  * Uses [InternetNetworkSelector] so requests traverse the vehicle's cellular/internet interface
@@ -572,7 +639,7 @@ internal object GeelyOnlineLrcRepository {
 
     private val lock = Any()
     private val memCache = LinkedHashMap<String, List<GeelyLyricLine>>(MAX_MEM_ENTRIES + 1, 0.75f, true)
-    private val inFlight = HashMap<String, MutableList<(List<GeelyLyricLine>) -> Unit>>()
+    private val inFlight = HashMap<String, MutableList<(List<GeelyLyricLine>, Boolean) -> Unit>>()
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "geely-cluster-lyrics").apply { isDaemon = true }
     }
@@ -581,26 +648,32 @@ internal object GeelyOnlineLrcRepository {
         memCache[cacheKey]
     }
 
-    fun fetchAsync(
+    fun fetchCandidatesAsync(
         context: Context,
-        cacheKey: String,
-        title: String,
-        artist: String,
-        album: String,
+        candidates: List<GeelyLrcQueryCandidate>,
         durationMs: Long?,
-        onResult: (List<GeelyLyricLine>) -> Unit,
+        onResult: (List<GeelyLyricLine>, Boolean) -> Unit,
     ) {
+        if (candidates.isEmpty()) return
+        val batchKey = candidates.joinToString("||") { it.cacheKey }
         val shouldStart: Boolean = synchronized(lock) {
-            memCache[cacheKey]?.let { hit ->
-                onResult(hit)
+            for (cand in candidates) {
+                val hit = memCache[cand.cacheKey]
+                if (hit != null && hit.size >= 2) {
+                    onResult(hit, cand.isFallback)
+                    return
+                }
+            }
+            if (candidates.all { memCache.containsKey(it.cacheKey) }) {
+                onResult(emptyList(), false)
                 return
             }
-            val waiters = inFlight[cacheKey]
+            val waiters = inFlight[batchKey]
             if (waiters != null) {
                 waiters.add(onResult)
                 false
             } else {
-                inFlight[cacheKey] = mutableListOf(onResult)
+                inFlight[batchKey] = mutableListOf(onResult)
                 true
             }
         }
@@ -608,25 +681,48 @@ internal object GeelyOnlineLrcRepository {
 
         val appCtx = context.applicationContext
         executor.execute {
-            val result = runCatching {
-                loadFromDiskCache(appCtx, cacheKey)
-                    ?: fetchRemoteLrc(appCtx, title, artist, album, durationMs)?.also { rawLrc ->
-                        saveToDiskCache(appCtx, cacheKey, rawLrc)
-                    }
-            }.getOrNull()?.let { raw ->
-                GeelyLrcParser.parse(raw)
-            }.orEmpty()
+            var matchedLines: List<GeelyLyricLine> = emptyList()
+            var matchedFallback = false
 
-            val callbacks: List<(List<GeelyLyricLine>) -> Unit> = synchronized(lock) {
-                // Cache both hits and misses in memory to avoid repeating failed lookups for the same song
-                memCache[cacheKey] = result
-                while (memCache.size > MAX_MEM_ENTRIES) {
-                    val oldest = memCache.entries.firstOrNull()?.key ?: break
-                    memCache.remove(oldest)
+            for (cand in candidates) {
+                val existing = synchronized(lock) { memCache[cand.cacheKey] }
+                if (existing != null) {
+                    if (existing.size >= 2) {
+                        matchedLines = existing
+                        matchedFallback = cand.isFallback
+                        break
+                    }
+                    continue
                 }
-                inFlight.remove(cacheKey).orEmpty()
+
+                val parsed = runCatching {
+                    loadFromDiskCache(appCtx, cand.cacheKey)
+                        ?: fetchRemoteLrc(appCtx, cand.title, cand.artist, cand.album, durationMs)?.also { rawLrc ->
+                            saveToDiskCache(appCtx, cand.cacheKey, rawLrc)
+                        }
+                }.getOrNull()?.let { raw ->
+                    GeelyLrcParser.parse(raw)
+                }.orEmpty()
+
+                synchronized(lock) {
+                    memCache[cand.cacheKey] = parsed
+                    while (memCache.size > MAX_MEM_ENTRIES) {
+                        val oldest = memCache.entries.firstOrNull()?.key ?: break
+                        memCache.remove(oldest)
+                    }
+                }
+
+                if (parsed.size >= 2) {
+                    matchedLines = parsed
+                    matchedFallback = cand.isFallback
+                    break
+                }
             }
-            callbacks.forEach { cb -> runCatching { cb(result) } }
+
+            val callbacks: List<(List<GeelyLyricLine>, Boolean) -> Unit> = synchronized(lock) {
+                inFlight.remove(batchKey).orEmpty()
+            }
+            callbacks.forEach { cb -> runCatching { cb(matchedLines, matchedFallback) } }
         }
     }
 
