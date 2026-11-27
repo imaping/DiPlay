@@ -1255,6 +1255,39 @@ internal class GeelyClusterSettingsPanel(
         card.addView(createHairline())
         addFlatSwitchRow(
             container = card,
+            title = "中央专辑滚动歌词（居中剧场）",
+            subtitle = "专辑页升级为居中大封面 + 对称声波光翼 + 3 行大字扫光滚动歌词与流光进度条；关闭则仅显示简约封面。",
+            checked = config.albumLyricsEnabled,
+        ) { checked ->
+            config = config.copy(albumLyricsEnabled = checked)
+            onConfigUpdated()
+            rebuildTabContent()
+        }
+        if (config.albumLyricsEnabled) {
+            card.addView(createHairline())
+            addFlatSwitchRow(
+                container = card,
+                title = "在线 LRC 完整歌词增强",
+                subtitle = "识别歌名与歌手后后台联网匹配带时间轴的完整 LRC（支持前瞻下文与精准扫光），断网自动回落为实时流式歌词。",
+                checked = config.albumOnlineLyricsEnabled,
+            ) { checked ->
+                config = config.copy(albumOnlineLyricsEnabled = checked)
+                onConfigUpdated()
+            }
+            card.addView(createHairline())
+            addFlatSwitchRow(
+                container = card,
+                title = "车机本地 / 蓝牙音乐开启中央滚动歌词",
+                subtitle = "未连接 CarPlay 时，也同步读取车机本地音乐（网易云、QQ 音乐等）与蓝牙音乐的歌名、歌词及进度；若部分音源元数据不规范可随时关闭。",
+                checked = config.albumLocalMediaLyricsEnabled,
+            ) { checked ->
+                config = config.copy(albumLocalMediaLyricsEnabled = checked)
+                onConfigUpdated()
+            }
+        }
+        card.addView(createHairline())
+        addFlatSwitchRow(
+            container = card,
             title = "地图边缘融合遮罩",
             subtitle = "柔化全屏地图四周边缘，突出双圆盘与顶部导航卡片的层次感。",
             checked = config.mapVignetteEnabled,
@@ -1277,8 +1310,10 @@ internal class GeelyClusterSettingsPanel(
                 compact = false,
                 heightDp = GeelyUiDimens.SEGMENT_HEIGHT_DP,
             ) { mode ->
+                val prevMode = config.centerMode
                 config = config.copy(centerMode = mode)
                 onConfigUpdated()
+                GeelyClusterEnhancer.onCenterModeChangedByUser(activity, prevMode, mode)
                 rebuildTabContent()
             },
             matchWrap(bottomMargin = dp(6)),
@@ -1286,7 +1321,7 @@ internal class GeelyClusterSettingsPanel(
         val centerHint = when (config.centerMode) {
             GeelyClusterCenterMode.AUTO -> "导航时显示地图，非导航播放音乐时显示专辑封面，待机时显示大号数字时钟。"
             GeelyClusterCenterMode.MAP -> "中央区域始终保留透明窗口用于显示全屏导航地图。"
-            GeelyClusterCenterMode.ALBUM -> "优先展示专辑封面与雾面模糊背景（无封面时自动回退为数字时钟）。"
+            GeelyClusterCenterMode.ALBUM -> "优先展示专辑封面与居中剧场滚动歌词（无封面时自动回退为数字时钟）。"
             GeelyClusterCenterMode.CLOCK -> "始终显示大号数字时钟、日期与平均油耗。"
             GeelyClusterCenterMode.TRIP -> "实时展示本次行程的里程、用时、平均速度、平均油耗与瞬时油耗。"
             GeelyClusterCenterMode.TIRE -> "实时展示四轮胎压（kPa）与胎温（°C），异常轮胎自动高亮提醒。"
@@ -1297,14 +1332,36 @@ internal class GeelyClusterSettingsPanel(
         card.addView(
             createActionButton("在中控屏查看车况与行程总览") {
                 GeelyVehicleStatusDialog.show(activity) { chosenMode ->
+                    val prevMode = config.centerMode
                     config = config.copy(centerMode = chosenMode)
                     onConfigUpdated()
+                    GeelyClusterEnhancer.onCenterModeChangedByUser(activity, prevMode, chosenMode)
                     rebuildTabContent()
                 }
             },
             matchWrap(bottomMargin = dp(10)).apply {
                 height = dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP)
             },
+        )
+
+        card.addView(createSubLabel("导航中切看车况后自动返回地图"), matchWrap(bottomMargin = dp(6)))
+        card.addView(
+            createSegmentedRow(
+                options = GeelySelfDrawConfig.NAV_AUTO_RETURN_OPTIONS.map { sec ->
+                    sec to if (sec == 0) "关闭" else "${sec}秒"
+                },
+                selected = config.navAutoReturnSeconds,
+                heightDp = 38,
+            ) { sec ->
+                config = config.copy(navAutoReturnSeconds = sec)
+                onConfigUpdated()
+                rebuildTabContent()
+            },
+            matchWrap(bottomMargin = dp(6)),
+        )
+        card.addView(
+            createHintText("导航进行中切换至「本次行程 / 胎压胎温 / 综合车况」时，无操作达到设定时间后自动切回导航地图（再次切页会重新计时；非导航状态不自动返回）。"),
+            matchWrap(bottomMargin = dp(8)),
         )
 
         addFlatSwitchRow(
@@ -1954,9 +2011,9 @@ internal class GeelyClusterSettingsPanel(
         val hasNotif = GeelyMediaNotificationListenerService.isEnabled(activity)
         card.addView(
             buildPermissionSubCard(
-                title = "通知使用权（车机音乐封面）",
+                title = "通知使用权（车机音乐封面与歌词）",
                 granted = hasNotif,
-                description = "未连接 CarPlay 时，自动读取网易云音乐、QQ 音乐及蓝牙音乐的专辑封面并同步至仪表。",
+                description = "未连接 CarPlay 时，自动读取网易云音乐、QQ 音乐及蓝牙音乐的专辑封面、歌名与歌词并同步至仪表。",
                 actionLabel = if (hasNotif) "管理权限" else "去授权",
                 onClick = ::openNotificationListenerSettings,
             ),

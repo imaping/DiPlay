@@ -997,6 +997,10 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     var config: GeelySelfDrawConfig = GeelyClusterPrefs.load(context)
         set(value) {
             field = value
+            lyricsEngine.setOnlineLrcEnabled(value.albumOnlineLyricsEnabled)
+            if (externalMediaActive && !carPlayMediaActive && !carPlayConnected) {
+                syncVehicleLyricsState()
+            }
             updatePollingState()
             invalidate()
         }
@@ -1070,6 +1074,9 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     private val colorTransition = GeelyColorTransition(durationMs = 800L)
     private val ultraThemeRenderer = GeelyUltraThemeRenderer(context)
     private val infoPageRenderer = GeelyClusterInfoPageRenderer()
+    private val albumStageRenderer = GeelyClusterAlbumStageRenderer()
+    private val lyricsEngine = GeelyClusterLyricsEngine(context) { postInvalidateOnAnimation() }
+    private var latestVehicleMediaSnapshot: GeelyVehicleMediaSnapshot? = null
 
     @Volatile
     private var sensorSnapshot = GeelyClusterSensorSnapshot()
@@ -1113,6 +1120,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     init {
         isClickable = false
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        lyricsEngine.setOnlineLrcEnabled(config.albumOnlineLyricsEnabled)
     }
 
     fun setArtwork(bitmap: Bitmap?) {
@@ -1144,12 +1152,66 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         }
     }
 
+    fun setCarPlayMediaSnapshot(snapshot: ClusterMusicState.Snapshot) {
+        val info = snapshot.info
+        setArtwork(snapshot.artwork)
+        setMusicInfo(info.title, info.playing)
+        val hasTrack = info.playing ||
+            !info.title.isNullOrBlank() ||
+            !info.artist.isNullOrBlank() ||
+            (snapshot.artwork != null && !snapshot.artwork.isRecycled)
+        if (!hasTrack) {
+            lyricsEngine.clear()
+            return
+        }
+        lyricsEngine.updateTrack(
+            GeelyClusterMediaTrack(
+                source = GeelyClusterMediaTrack.Source.CARPLAY,
+                title = info.title,
+                artist = info.artist,
+                album = info.album,
+                sourceApp = info.sourceApp,
+                durationMillis = info.durationMillis,
+                positionMillis = info.elapsedMillis,
+                positionAtElapsedMs = snapshot.positionAt,
+                playbackSpeed = if (info.playing) 1f else 0f,
+                playing = info.playing,
+                artworkIdentity = info.artworkTransferId ?: 0,
+            ),
+        )
+    }
+
     fun applyVehicleMedia(snapshot: GeelyVehicleMediaSnapshot) {
+        latestVehicleMediaSnapshot = snapshot
         val active = snapshot.hasContent
         carPlayMediaActive = false
         externalMediaActive = active
         setMusicInfo(null, false)
         setArtwork(if (active) snapshot.artwork else null)
+        syncVehicleLyricsState()
+    }
+
+    private fun syncVehicleLyricsState() {
+        val snapshot = latestVehicleMediaSnapshot
+        if (snapshot != null && snapshot.hasContent && config.albumLocalMediaLyricsEnabled) {
+            lyricsEngine.updateTrack(
+                GeelyClusterMediaTrack(
+                    source = GeelyClusterMediaTrack.Source.VEHICLE_LOCAL,
+                    title = snapshot.title,
+                    artist = snapshot.artist,
+                    album = snapshot.album,
+                    sourceApp = snapshot.packageName,
+                    durationMillis = snapshot.durationMillis,
+                    positionMillis = snapshot.positionMillis,
+                    positionAtElapsedMs = snapshot.positionAtElapsedMs,
+                    playbackSpeed = snapshot.playbackSpeed,
+                    playing = snapshot.playing,
+                    artworkIdentity = 0,
+                ),
+            )
+        } else {
+            lyricsEngine.clear()
+        }
     }
 
     fun hasUsableArtwork(): Boolean = rawArtwork != null && rawArtwork?.isRecycled == false
@@ -1167,12 +1229,10 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         dominantAlbumColor = null
         nowPlayingTitle = null
         nowPlayingActive = false
+        latestVehicleMediaSnapshot = null
+        lyricsEngine.clear()
+        albumStageRenderer.reset()
         invalidate()
-    }
-
-    fun notifyPageSwitched(label: String, index: Int, total: Int) {
-        infoPageRenderer.triggerPageSwitchToast(label, index, total)
-        postInvalidateOnAnimation()
     }
 
     override fun onAttachedToWindow() {
@@ -1227,6 +1287,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         pollFuture?.cancel(false)
         pollFuture = null
         ultraThemeRenderer.reset()
+        albumStageRenderer.reset()
         colorTransition.reset()
     }
 
@@ -1312,6 +1373,12 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         val showingCenterInfoPage = effectiveDisplayMode.isTelemetryPage
         val activeTelemetry = if (previewMode) GeelyVehicleTelemetrySnapshot.previewDemo() else telemetrySnapshot
         val compactForTopCard = effectiveRouteActive && config.fullscreenCardEnabled
+        val nowUptime = SystemClock.uptimeMillis()
+        val showingCenterAlbumStage = effectiveDisplayMode == GeelyClusterCenterMode.ALBUM &&
+            config.albumLyricsEnabled && (
+                previewMode || carPlayMediaActive || hasCarPlayFeed ||
+                    (externalMediaActive && config.albumLocalMediaLyricsEnabled)
+                )
 
         when (effectiveDisplayMode) {
             GeelyClusterCenterMode.ALBUM -> {
@@ -1319,7 +1386,33 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                 if (drawBlurredAlbumBackground(canvas, useLightPalette)) {
                     needsNextFrame = true
                 }
-                drawCenteredAlbumCover(canvas, top = if (effectiveRouteActive) 240f else 172f, lightMode = useLightPalette)
+                val art = rawArtwork
+                if (showingCenterAlbumStage && art != null && !art.isRecycled) {
+                    val artProgress = if (previewMode) {
+                        1f
+                    } else {
+                        ((nowUptime - artworkTransitionStartMs).toFloat() / 420f).coerceIn(0f, 1f)
+                    }
+                    val stageAccent = dominantAlbumColor ?: currentAccent
+                    val frame = if (previewMode) null else lyricsEngine.snapshotFrame(nowElapsed, nowUptime)
+                    if (albumStageRenderer.draw(
+                            canvas = canvas,
+                            artwork = art,
+                            prevArtwork = prevRawArtwork,
+                            artworkTransitionProgress = artProgress,
+                            lyricsFrame = frame,
+                            accentColor = stageAccent,
+                            lightMode = useLightPalette,
+                            compactForTopCard = compactForTopCard,
+                            nowUptimeMs = nowUptime,
+                            previewMode = previewMode,
+                        )
+                    ) {
+                        needsNextFrame = true
+                    }
+                } else {
+                    drawCenteredAlbumCover(canvas, top = if (effectiveRouteActive) 240f else 172f, lightMode = useLightPalette)
+                }
             }
             GeelyClusterCenterMode.MAP -> {
                 if (config.mapVignetteEnabled) {
@@ -1418,19 +1511,21 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
 
         // 4. Bottom center CarPlay lyrics / song bar (`baselineY = 688f`).
         //    Only drawn during CarPlay; when disconnected, leave the bottom center clear for the
-        //    factory head-unit media bar.
-        val nowUptime = SystemClock.uptimeMillis()
+        //    factory head-unit media bar. When the centered album lyrics theater is active, avoid
+        //    repeating the same lyric line at the bottom and fall back to time / fuel status.
         if (config.bottomBarEnabled && hasCarPlayAudio) {
-            val showStatusFallback = !showingCenterClock && !showingCenterInfoPage && activeSong.isNullOrBlank()
+            val barSong = if (showingCenterAlbumStage) null else activeSong
+            val barSongPlaying = !barSong.isNullOrBlank() && activeSongPlaying
+            val showStatusFallback = !showingCenterClock && !showingCenterInfoPage && barSong.isNullOrBlank()
             val timeText = if (showStatusFallback) timeFormatter.format(Date()) else ""
             val fallbackFuel = if (showStatusFallback) fuelText else ""
-            if (!activeSong.isNullOrBlank() || showStatusFallback) {
+            if (!barSong.isNullOrBlank() || showStatusFallback) {
                 if (ultraThemeRenderer.drawUltraBottomMusicBar(
                         canvas = canvas,
                         style = themeStyle,
                         nightMode = nightMode,
-                        songTitle = activeSong?.takeIf { it.isNotBlank() },
-                        isPlaying = activeSongPlaying,
+                        songTitle = barSong?.takeIf { it.isNotBlank() },
+                        isPlaying = barSongPlaying,
                         accentColor = currentAccent,
                         nowMs = nowUptime,
                         fallbackTime = timeText,
@@ -1442,17 +1537,8 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             }
         }
 
-        // 5. Transient steering-wheel page switch toast & background TPMS alert banner
-        val toastAnimating = infoPageRenderer.drawPageSwitchToast(
-            canvas = canvas,
-            style = themeStyle,
-            nightMode = nightMode,
-            accentColor = currentAccent,
-            nowUptimeMs = nowUptime,
-        )
-        if (toastAnimating) {
-            needsNextFrame = true
-        } else if (!previewMode && config.tireAlertPopupEnabled &&
+        // 5. Background TPMS alert banner when viewing another center page
+        if (!previewMode && config.tireAlertPopupEnabled &&
             effectiveDisplayMode != GeelyClusterCenterMode.TIRE &&
             activeTelemetry.tires.hasAnyAlert
         ) {

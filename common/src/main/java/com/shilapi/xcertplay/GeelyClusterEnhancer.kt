@@ -85,6 +85,62 @@ internal object GeelyClusterEnhancer {
         }
     }
 
+    private var modeBeforeTelemetryPeek: GeelyClusterCenterMode? = null
+    private val navAutoReturnRunnable = Runnable { performNavAutoReturn() }
+
+    private fun cancelNavAutoReturn() {
+        mainHandler.removeCallbacks(navAutoReturnRunnable)
+        modeBeforeTelemetryPeek = null
+    }
+
+    /**
+     * When actively navigating and the driver peeks at a telemetry page (`TRIP` / `TIRE` /
+     * `VEHICLE_INFO`), automatically returns to the map (`AUTO` or `MAP`) after
+     * [GeelySelfDrawConfig.navAutoReturnSeconds] seconds. Each subsequent switch resets the timer.
+     */
+    fun onCenterModeChangedByUser(
+        context: Context,
+        previousMode: GeelyClusterCenterMode?,
+        nextMode: GeelyClusterCenterMode,
+    ) {
+        val app = context.applicationContext
+        runOnMain {
+            mainHandler.removeCallbacks(navAutoReturnRunnable)
+            if (!nextMode.isTelemetryPage) {
+                modeBeforeTelemetryPeek = null
+                return@runOnMain
+            }
+            val cfg = GeelyClusterPrefs.load(app)
+            val routeActive = isFullScreenPresentationActive && latestGuidance != null
+            if (!routeActive || cfg.navAutoReturnSeconds <= 0) {
+                modeBeforeTelemetryPeek = null
+                return@runOnMain
+            }
+            if (modeBeforeTelemetryPeek == null) {
+                modeBeforeTelemetryPeek = if (previousMode == GeelyClusterCenterMode.AUTO) {
+                    GeelyClusterCenterMode.AUTO
+                } else {
+                    GeelyClusterCenterMode.MAP
+                }
+            }
+            mainHandler.postDelayed(navAutoReturnRunnable, cfg.navAutoReturnSeconds * 1000L)
+        }
+    }
+
+    private fun performNavAutoReturn() {
+        val app = hostAppContext ?: return
+        val cfg = GeelyClusterPrefs.load(app)
+        val routeActive = isFullScreenPresentationActive && latestGuidance != null
+        if (!routeActive || cfg.navAutoReturnSeconds <= 0 || !cfg.centerMode.isTelemetryPage) {
+            modeBeforeTelemetryPeek = null
+            return
+        }
+        val returnMode = modeBeforeTelemetryPeek ?: GeelyClusterCenterMode.MAP
+        modeBeforeTelemetryPeek = null
+        GeelyClusterPrefs.save(app, cfg.copy(centerMode = returnMode))
+        refreshConfig(app)
+    }
+
     private fun isPhoneCallActive(context: Context?): Boolean {
         if (BydNavigationOutputs.carPlayCall() != null) return true
         val am = context?.getSystemService(AudioManager::class.java) ?: return false
@@ -158,8 +214,7 @@ internal object GeelyClusterEnhancer {
                         carPlayConnected = true
                         carPlayMediaActive = hasCarPlayTrack
                         externalMediaActive = false
-                        setArtwork(snapshot.artwork)
-                        setMusicInfo(snapshot.info.title, snapshot.info.playing)
+                        setCarPlayMediaSnapshot(snapshot)
                     }
                 } else if (carPlayHostAttached && hasCarPlayTrack) {
                     // Support CarPlay album/lyrics on the persistent dual-dial theme even when
@@ -167,8 +222,7 @@ internal object GeelyClusterEnhancer {
                     currentFakeUltraView?.apply {
                         carPlayMediaActive = true
                         externalMediaActive = false
-                        setArtwork(snapshot.artwork)
-                        setMusicInfo(snapshot.info.title, snapshot.info.playing)
+                        setCarPlayMediaSnapshot(snapshot)
                     }
                 } else if (!isFullScreenPresentationActive) {
                     applyVehicleMediaIfStandby()
@@ -511,6 +565,9 @@ internal object GeelyClusterEnhancer {
         isFullScreenPresentationActive = presentationShowing
 
         val routeActive = guidance != null
+        if (!routeActive || !presentationShowing) {
+            cancelNavAutoReturn()
+        }
         currentFakeUltraView?.apply {
             carPlayConnected = presentationShowing
             this.routeActive = presentationShowing && routeActive
@@ -715,6 +772,7 @@ internal object GeelyClusterEnhancer {
         isFullScreenPresentationActive = false
         wasInPhoneCall = false
         mainHandler.removeCallbacks(callRecoveryTick)
+        cancelNavAutoReturn()
 
         activeDimWatcher?.close()
         activeDimWatcher = null
@@ -832,7 +890,7 @@ internal object GeelyClusterEnhancer {
         val nextMode = available[nextIdx]
         GeelyClusterPrefs.save(app, cfg.copy(centerMode = nextMode))
         refreshConfig(app)
-        currentFakeUltraView?.notifyPageSwitched(nextMode.shortLabel, nextIdx, available.size)
+        onCenterModeChangedByUser(app, cfg.centerMode, nextMode)
         if (!hasCarPlay) {
             GeelyNativeClusterMapObserver.refreshNow()
         }
@@ -1069,6 +1127,8 @@ internal object GeelyClusterEnhancer {
             searchIndexSink.add("机甲仪表主题风格")
             searchIndexSink.add("W-HUD 抬头显示引导")
             searchIndexSink.add("方向盘视图循环切换键")
+            searchIndexSink.add("中央专辑滚动歌词")
+            searchIndexSink.add("车机本地与蓝牙音乐歌词")
             searchIndexSink.add("仪表副屏输出")
             return
         }

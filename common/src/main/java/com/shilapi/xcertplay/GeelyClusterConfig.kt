@@ -187,6 +187,9 @@ internal data class GeelySelfDrawConfig(
     val dialLeftEnabled: Boolean = true,
     val dialRightEnabled: Boolean = true,
     val albumArtEnabled: Boolean = true,
+    val albumLyricsEnabled: Boolean = true,
+    val albumOnlineLyricsEnabled: Boolean = true,
+    val albumLocalMediaLyricsEnabled: Boolean = true,
     val bottomBarEnabled: Boolean = true,
     val dialColorMode: GeelyDialColorMode = GeelyDialColorMode.DEFAULT,
     val dialThemeStyle: GeelyClusterThemeStyle = GeelyClusterThemeStyle.AERO_MECHA,
@@ -198,7 +201,12 @@ internal data class GeelySelfDrawConfig(
     val centerSwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
     val cycleModes: Set<GeelyClusterCenterMode> = GeelyClusterCenterMode.DEFAULT_CYCLE_MODES,
     val tireAlertPopupEnabled: Boolean = true,
+    val navAutoReturnSeconds: Int = DEFAULT_NAV_AUTO_RETURN_SECONDS,
 ) {
+    companion object {
+        const val DEFAULT_NAV_AUTO_RETURN_SECONDS = 10
+        val NAV_AUTO_RETURN_OPTIONS = listOf(0, 5, 10, 15, 20)
+    }
     val hasAnySelfDrawOverlay: Boolean
         get() = hudEnabled || cardEnabled || fullscreenCardEnabled || laneEnabled || previewEnabled
 
@@ -221,6 +229,9 @@ internal object GeelyClusterPrefs {
     private const val KEY_DIAL_LEFT_ENABLED = "self_draw_dial_left_enabled"
     private const val KEY_DIAL_RIGHT_ENABLED = "self_draw_dial_right_enabled"
     private const val KEY_ALBUM_ART_ENABLED = "self_draw_album_art_enabled"
+    private const val KEY_ALBUM_LYRICS_ENABLED = "self_draw_album_lyrics_enabled"
+    private const val KEY_ALBUM_ONLINE_LYRICS_ENABLED = "self_draw_album_online_lyrics_enabled"
+    private const val KEY_ALBUM_LOCAL_MEDIA_LYRICS_ENABLED = "self_draw_album_local_media_lyrics_enabled"
     private const val KEY_BOTTOM_BAR_ENABLED = "self_draw_bottom_bar_enabled"
     private const val KEY_DIAL_COLOR_MODE = "self_draw_dial_color_mode"
     private const val KEY_DIAL_THEME_STYLE = "self_draw_dial_theme_style"
@@ -232,6 +243,7 @@ internal object GeelyClusterPrefs {
     private const val KEY_CENTER_SWITCH_TRIGGER = "self_draw_center_switch_trigger"
     private const val KEY_CYCLE_MODES = "self_draw_cycle_modes"
     private const val KEY_TIRE_ALERT_POPUP_ENABLED = "self_draw_tire_alert_popup_enabled"
+    private const val KEY_NAV_AUTO_RETURN_SECONDS = "self_draw_nav_auto_return_seconds"
 
     fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -259,6 +271,9 @@ internal object GeelyClusterPrefs {
             dialLeftEnabled = sp.getBoolean(KEY_DIAL_LEFT_ENABLED, true),
             dialRightEnabled = sp.getBoolean(KEY_DIAL_RIGHT_ENABLED, true),
             albumArtEnabled = sp.getBoolean(KEY_ALBUM_ART_ENABLED, true),
+            albumLyricsEnabled = sp.getBoolean(KEY_ALBUM_LYRICS_ENABLED, true),
+            albumOnlineLyricsEnabled = sp.getBoolean(KEY_ALBUM_ONLINE_LYRICS_ENABLED, true),
+            albumLocalMediaLyricsEnabled = sp.getBoolean(KEY_ALBUM_LOCAL_MEDIA_LYRICS_ENABLED, true),
             bottomBarEnabled = sp.getBoolean(KEY_BOTTOM_BAR_ENABLED, true),
             dialColorMode = GeelyDialColorMode.fromName(sp.getString(KEY_DIAL_COLOR_MODE, null)),
             dialThemeStyle = GeelyClusterThemeStyle.fromName(sp.getString(KEY_DIAL_THEME_STYLE, null)),
@@ -270,6 +285,10 @@ internal object GeelyClusterPrefs {
             centerSwitchTrigger = GeelyClusterSwitchTrigger.fromName(sp.getString(KEY_CENTER_SWITCH_TRIGGER, null)),
             cycleModes = GeelyClusterCenterMode.parseCycleModes(sp.getString(KEY_CYCLE_MODES, null)),
             tireAlertPopupEnabled = sp.getBoolean(KEY_TIRE_ALERT_POPUP_ENABLED, true),
+            navAutoReturnSeconds = sp.getInt(
+                KEY_NAV_AUTO_RETURN_SECONDS,
+                GeelySelfDrawConfig.DEFAULT_NAV_AUTO_RETURN_SECONDS,
+            ).coerceIn(0, 60),
         )
     }
 
@@ -285,6 +304,9 @@ internal object GeelyClusterPrefs {
             .putBoolean(KEY_DIAL_LEFT_ENABLED, config.dialLeftEnabled)
             .putBoolean(KEY_DIAL_RIGHT_ENABLED, config.dialRightEnabled)
             .putBoolean(KEY_ALBUM_ART_ENABLED, config.albumArtEnabled)
+            .putBoolean(KEY_ALBUM_LYRICS_ENABLED, config.albumLyricsEnabled)
+            .putBoolean(KEY_ALBUM_ONLINE_LYRICS_ENABLED, config.albumOnlineLyricsEnabled)
+            .putBoolean(KEY_ALBUM_LOCAL_MEDIA_LYRICS_ENABLED, config.albumLocalMediaLyricsEnabled)
             .putBoolean(KEY_BOTTOM_BAR_ENABLED, config.bottomBarEnabled)
             .putString(KEY_DIAL_COLOR_MODE, config.dialColorMode.name)
             .putString(KEY_DIAL_THEME_STYLE, config.dialThemeStyle.name)
@@ -296,6 +318,7 @@ internal object GeelyClusterPrefs {
             .putString(KEY_CENTER_SWITCH_TRIGGER, config.centerSwitchTrigger.name)
             .putString(KEY_CYCLE_MODES, GeelyClusterCenterMode.serializeCycleModes(config.cycleModes))
             .putBoolean(KEY_TIRE_ALERT_POPUP_ENABLED, config.tireAlertPopupEnabled)
+            .putInt(KEY_NAV_AUTO_RETURN_SECONDS, config.navAutoReturnSeconds.coerceIn(0, 60))
         writeArea(editor, "hud", config.hudArea.clamp())
         writeArea(editor, "card", config.cardArea.clamp())
         writeArea(editor, "fullscreen_card", config.fullscreenCardArea.clamp())

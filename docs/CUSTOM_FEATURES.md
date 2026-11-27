@@ -12,8 +12,8 @@
 | --- | --- | --- | --- |
 | [1. KX11 自动识别与开箱默认配置](#1-ecarx-kx11-车机自动识别与开箱默认配置) | 自动默认 60 fps、音频焦点、导航播报音频焦点、位置与车速上报 | 吉利星越 L / KX11 | 自动生效（可在设置中手动覆盖） |
 | [2. ECARX GPS + CAN 轮速融合定位](#2-ecarx-硬件-gps--can-轮速融合定位增强) | 硬件 GNSS 与 `$PASCD` 融合、隧道去重、CAN 车速直填 `$GPRMC`、轮速诊断日志 | ECARX 车机 | **设置 → 导航 → 向 iPhone 发送位置** |
-| [3. KX11 方向盘实体按键原生接入](#3-kx11-方向盘实体按键原生接入与学习) | 直连 `com.geely.inputservice`，支持 Siri、播放/暂停与仪表视图循环切换 | 吉利 KX11 | **设置 → 车辆 → 方向盘按键** / **设置 → 吉利设置** |
-| [4. Fake Ultra 矢量仪表与 5 套主题](#4-吉利-fake-ultra-矢量双圆盘仪表与多主题系统) | 5 套纯 SVG 昼夜双圆盘主题、5 通道 CAN 传感器、动态配色、启动常驻保活、通话后自动恢复 | 吉利 / ECARX 车机 | **设置 → 吉利设置 → 仪表显示** |
+| [3. KX11 方向盘实体按键原生接入](#3-kx11-方向盘实体按键原生接入与学习) | 直连 `com.geely.inputservice`，支持 Siri、播放/暂停与自定义仪表视图循环切换 | 吉利 KX11 | **设置 → 车辆 → 方向盘按键** / **设置 → 吉利设置** |
+| [4. Fake Ultra 矢量仪表与车况信息页](#4-吉利-fake-ultra-矢量双圆盘仪表与车况信息系统) | 6 套机甲双圆盘主题、原车 CAN/TPMS/行程信号、本次行程/胎压胎温/综合车况页、导航自动回地图与胎压异常告警 | 吉利 / ECARX 车机 | **设置 → 吉利设置 → 仪表与主题** |
 | [5. 车机原生音乐与实时歌词同步](#5-车机原生音乐与实时歌词仪表同步) | 未连 CarPlay 时在常驻仪表展示网易云/QQ 音乐/蓝牙音乐封面与实时歌词 | 吉利 / ECARX 车机 | **设置 → 吉利设置 → 权限与兼容** |
 | [6. 原车昼夜信号权威同步](#6-原车信号驱动的权威昼夜模式同步) | 读取 ECARX 大灯/主题昼夜信号，联动 CarPlay、仪表主题与自绘导航卡 | 吉利 / ECARX 车机 | 自动生效（仪表支持自动/深色/浅色切换） |
 | [7. 自绘 W-HUD 与仪表导航卡片](#7-吉利自绘-w-hud经典仪表卡片与全屏导航卡片) | 独立悬浮窗自绘 W-HUD、经典仪表卡、全屏导航卡、车道提示，支持像素微调与实车预览 | 吉利 `1920×1080` / `1920×720` 复合仪表 | **设置 → 吉利设置 → 导航卡片 / 抬头显示 (HUD) / 效果预览** |
@@ -63,46 +63,57 @@ KX11 方向盘按键经由 `ECarXCarHardKeyService` → `com.geely.inputservice.
   - 支持 **单按** 与 **双击** 触发 Siri（复用双击间隔、延迟触发与通话中屏蔽逻辑）；单按模式下，原车语音键（`200231`）短按保留给车机原生语音，仅**长按**触发 Siri；微信键等备用键短按/长按均可触发。
   - 支持映射 **媒体播放/暂停**。
 - **仪表中央显示循环切换快捷键**：
-  - 可在 **设置 → 吉利设置 → 仪表显示** 中独立绑定一个方向盘按键，支持 **长按** 或 **连点（双击，600 ms 窗口）** 触发，在「导航地图 / 专辑封面 / 大号数字时钟」之间循环切换。
+  - 可在 **设置 → 吉利设置 → 仪表与主题** 中独立绑定一个方向盘按键，支持 **长按** 或 **连点（双击，600 ms 窗口）** 触发，在已勾选的「导航地图 / 专辑封面 / 数字时钟 / 本次行程 / 胎压胎温 / 综合车况」页面间循环切换（无地图投影或无专辑封面时自动跳过）。
+  - 支持**导航中切看车况自动回地图**（`关闭 / 5 / 10 / 15 / 20 秒`，默认 `10 秒`）：仅在 CarPlay 导航进行中切入「本次行程 / 胎压胎温 / 综合车况」时开始倒计时，每次切页自动重置计时，超时后平滑切回导航地图；非导航状态不自动返回。
   - 与短按 Siri 共键时会自动提示改用「长按」触发以防冲突；即使 CarPlay 已断开，只要常驻仪表主题仍在运行即可继续通过方向盘切换视图。
 
 ---
 
-## 4. 吉利 Fake Ultra 矢量双圆盘仪表与多主题系统
+## 4. 吉利 Fake Ultra 矢量双圆盘仪表与车况信息系统
 
-实现文件：`GeelyFakeUltraView.kt`、`GeelyClusterThemes.kt`、`GeelyClusterExtraThemes.kt`、`GeelyClusterConfig.kt`、`GeelyClusterThemeWindow.kt`、`GeelyEcarxHardware.kt`、`GeelyClusterEnhancer.kt`
+实现文件：`GeelyFakeUltraView.kt`、`GeelyClusterThemes.kt`、`GeelyClusterExtraThemes.kt`、`GeelyClusterConfig.kt`、`GeelyClusterThemeWindow.kt`、`GeelyEcarxHardware.kt`、`GeelyVehicleTelemetry.kt`、`GeelyClusterInfoPages.kt`、`GeelyVehicleSignalProbe.kt`、`GeelyClusterEnhancer.kt`、`GeelyClusterSettingsUi.kt`
 
-### 4.1 5 套纯 SVG 矢量仪表主题（实时切换 · 全部支持昼夜）
+### 4.1 6 套机甲矢量双圆盘主题（实时切换 · 全部支持昼夜）
 
-内置完整的 SVG 路径/渐变/蒙版解析与缓存引擎（`GeelySvgPathParser`、`GeelyVectorSvgCache`），静态表盘资源位于 `common/src/main/assets/cluster-visual/themes/`，实时动态指针、光弧与数据由 Kotlin 阻尼插值渲染：
+由统一主题规格表与矢量绘制引擎驱动，实时动态指针、能量块、光弧与数据由 Kotlin 阻尼插值渲染，全部支持浅色/深色昼夜配色：
 
-| 主题 | 标识 | 车速 / 转速量程 | 视觉特征 |
-| --- | --- | --- | --- |
-| **赛道计时 · 运动指针** | `SPORT_CHRONO` | 0–240 km/h · 0–8000 RPM | 运动指针 + 顶部 9 颗动态换挡灯珠 + 碳纤维表底 |
-| **典藏鎏金 · 奢华机械** | `HERITAGE_GOLD` | 0–200 km/h · 0–7000 RPM | 瑞士铁轨刻度 + 立体剑形指针 + 夜间墨玉金 / 日间象牙陶瓷盘 |
-| **机甲光翼 · 未来战术** | `AERO_MECHA` | 0–220 km/h · 0–7500 RPM | 战术切角双翼外框 + 28 格独立发光 LED 能量块 + 斜体数字 |
-| **北欧冰川 · 液态玻璃** | `NORDIC_GLASS` | 0–180 km/h · 0–7000 RPM | 通透冰霜玻璃环 + 镜面高光边 + 悬浮流光圆点 |
-| **复古微光 · 荧光液晶** | `RETRO_VFD` | 0–200 km/h · 0–7000 RPM | 80s VFD 荧光微点阵底 + 36 枚阶梯荧光柱 + 格栅油量条 |
+- `AERO_MECHA`（机甲光翼 · 未来战术）
+- `HYPER_WING`（超跑双翼 · 极速光刃）
+- `VALKYRIE_HEX`（女武神 · 六维装甲）
+- `ORBIT_RADAR`（量子雷达 · 脉冲星环）
+- `TITAN_CORE`（泰坦核心 · 重装反应堆）
+- `PHANTOM_STEALTH`（幽灵隐形 · 暗影战机）
 
-### 4.2 原车 CAN 实时传感器驱动
+### 4.2 原车 CAN / TPMS / 行程实时传感器驱动
 
-`GeelyEcarxSensorReader` 通过反射对接 ECARX `ISensor`（250 ms 定时轮询 + 平滑阻尼动画），零编译期厂商依赖：
-- **车速**（`0x00101A00`，m/s → km/h）与 **油量百分比**（`0x00404500`）→ 左侧圆盘
-- **发动机转速**（`0x00100900`）与 **实时档位**（`0x00200200`，支持 `P` / `R` / `N` / `D` / `M1..M10`）→ 右侧圆盘（全屏导航时中心可自动嵌入圆角专辑封面）
-- **平均油耗**（`0x00400100`，L/100km）→ 底部状态栏 / 待机时钟下方
+通过零编译期厂商依赖的只读反射对接 ECARX AdaptAPI（已在星越 L `kx11_high` Android 9 实车验证）：
+- **基础仪表通道**（`GeelyEcarxSensorReader`，250 ms 轮询 + 阻尼动画）：
+  - **车速**（`0x00101A00`，m/s → km/h）与 **油量百分比**（`0x00404500`）→ 左侧圆盘
+  - **发动机转速**（`0x00100900`）与 **实时档位**（`0x00200200`，支持 `P` / `R` / `N` / `D` / `M1..M10`）→ 右侧圆盘（全屏导航时中心可自动嵌入圆角专辑封面）
+  - **平均油耗**（`0x00400100`，L/100km）→ 底部状态栏 / 待机时钟下方
+- **扩展车况、胎压与行程通道**（`GeelyVehicleTelemetryReader`，1 s 轮询）：
+  - **本次行程**：`IHev.getTripData()` 的 `getLatestDrivingInfo()`（行程里程米→km、行程用时毫秒→小时/分、平均速度）与 `getLatestAvgEnergyInfo()`（本次平均油耗，带锁定源与防抖防闪烁机制），叠加 `IVirtualSensor` 瞬时油耗（`0x00400200`）；无 `ITripData` 车型自动回退 CAN 车速数值积分。
+  - **四轮胎压与胎温**：`ITireSensor`（`0x00500100..0x00500400` 四轮胎压 `kPa`、`0x00500500..0x00500800` 四轮胎温 `°C`、`0x00500900..0x00501400` 胎压/高温/快漏气告警、`0x00504000` TPMS 系统态），实车与原车仪表读数一致。
+  - **车辆综合信息**：总里程（`0x00100700`）、总平均油耗（`0x00400100`）、剩余续航（`0x00100800`）、剩余油量（`0x00100600` mL→L 与 `0x00404500` %）、车外/车内温度（`0x00100B00`/`0x00100C00`）、距保养参考里程（`0x00403000`）、机油百分比与机油/冷却液液位及 6 路动力系统告警（`0x0030xxxx`），并附带可手动清零的本地持久化累计统计（类似 Trip B）。
 
-### 4.3 配色模式、中央视图与布局细节
+### 4.3 配色模式、中央视图与车况信息页
 
 - **3 种强调配色模式**（800 ms 平滑 RGB 过渡）：
   - **主题默认色**（随各主题昼夜默认色）
   - **随车速四段渐变**（0–40–80–120+ km/h：青 → 绿 → 琥珀 → 红）
   - **随专辑封面主色**（24-bin HSV 主色动态提取）
-- **4 种中央显示模式**：
-  - `自动（地图 / 专辑 / 时钟）`：非导航且播放音乐时自动展示专辑封面，导航时切回地图，无音乐无导航时显示大号数字时钟。
-  - `导航地图` / `专辑封面` / `大号数字时钟`：支持在设置或方向盘按键手动指定。
+- **7 种中央显示模式**（支持在设置、中控车况总览或方向盘循环键切换）：
+  - `自动（地图 / 专辑 / 时钟）`：导航时展示地图，非导航播放音乐时展示专辑封面，无音乐无导航时显示大号数字时钟。
+  - `导航地图` / `专辑封面` / `大号数字时钟`
+  - `本次行程`：居中 5 行矢量图标列表展示本次里程、用时、平均速度、平均油耗与瞬时油耗，底部附带剩余续航与车外温度。
+  - `胎压与胎温`：居中俯视矢量车身 + 四轮状态胶囊 + 四角对称胎压（`kPa`）/胎温（`°C`）读数，异常轮胎标红高亮提示。
+  - `综合车况`：2×3 卡片网格展示总里程、总平均油耗、剩余续航与油量、车内外温度、距保养参考及机油/冷却液健康态，底部展示自重置累计统计。
+- **胎压异常后台提醒与中控总览**：
+  - 开启「胎压 / 胎温异常自动提醒」后，即使当前停留在导航地图、专辑或时钟页，一旦检测到胎压偏低/偏高、胎温过高或快漏气，仪表顶部自动弹出高对比度告警横幅。
+  - 可在 **设置 → 吉利设置 → 仪表与主题 → 在中控屏查看车况与行程总览** 中一屏查看全部车况数据、手动刷新、清零累计统计或一键切换仪表中央视图。
 - **视觉细节与原车兼容**：
   - 专辑模式自带 3-pass Box Blur 全宽动态模糊背景、420 ms 交叉淡入淡出和居中圆角封面卡片。
-  - 地图模式提供左右及顶部边缘羽化主题遮罩，保留中央透明地图窗口。
+  - 地图模式提供左右及顶部边缘羽化主题遮罩，保留中央透明地图窗口；导航中切换至车况页时自动避让顶部全屏导航卡片。
   - 双圆盘整体上移并缩放（`0.92x`），避让原车 QNX 仪表底部状态栏，避免遮挡原车底栏信息；CarPlay 底部歌词/歌名状态栏在待机或播放车机本地音乐时自动隐藏，避免与原车底栏重叠。
 
 ### 4.4 软件启动加载主题、断开常驻与后台保活
@@ -165,18 +176,17 @@ KX11 方向盘按键经由 `ECarXCarHardKeyService` → `com.geely.inputservice.
 
 ---
 
-## 8. 独立「吉利设置」页面与全屏配置预览面板
+## 8. 独立「吉利设置」页面、全屏配置预览与信号探测工具
 
-实现文件：`DiPlayActivity.kt`、`GeelyClusterEnhancer.kt`、`strings_geely.xml`
+实现文件：`DiPlayActivity.kt`、`GeelyClusterSettingsUi.kt`、`GeelyClusterEnhancer.kt`、`GeelyVehicleSignalProbe.kt`、`strings_geely.xml`
 
 - 在 DiPlay 设置中新增独立的 **吉利设置（Geely）** 分类（无需混杂在「高级」设置中）。
-- 页面内嵌 5 个分页标签，所有修改实时持久化并立即刷新仪表显示：
-  1. **仪表显示**：5 套主题单选、启动加载主题、左右圆盘开关、配色模式、昼夜模式、底部栏、专辑封面、中央显示模式、方向盘切换按键学习与触发方式、地图主题遮罩。
-  2. **导航卡片**：全屏导航卡/经典仪表卡/车道提示开关与区域坐标微调。
-  3. **抬头显示 (HUD)**：W-HUD 开关、车道提示开关、W-HUD 裁剪源区域微调。
-  4. **效果预览**：内置 `1920×1080` 等比交互预览画布（同步显示上下分区线与虚线裁剪框），支持一键切换主题/中央视图/昼夜/导航与待机场景、手动测试切全屏（Mode 3）/回经典（Mode 1），以及开启实车模拟预览。
-  5. **权限与兼容**：快捷管理悬浮窗权限（`TYPE_APPLICATION_OVERLAY`）、车机通知使用权（本地音乐与歌词读取）及手动选择仪表副屏 Display ID。
-- 点击「全屏配置与预览」可打开适配车机横屏宽屏的 **左侧导航栏 + 右侧滚动区** 全屏配置弹窗，自动跟随 DiPlay 当前浅色/深色主题调色板。
+- 页面内嵌 4 个分页标签，所有修改实时持久化并立即刷新仪表显示：
+  1. **仪表与主题**：6 套主题单选、启动加载主题、左右圆盘与元素开关、配色模式、昼夜模式、7 种中央显示模式、中控车况与行程总览入口、导航切看车况自动回地图时长、胎压异常提醒开关、方向盘切换按键学习/触发方式与循环页面多选。
+  2. **导航与 HUD**：W-HUD / 全屏导航卡 / 经典仪表卡 / 车道提示开关与像素坐标微调。
+  3. **预览与调试**：内置 `1920×1080` 等比交互预览画布（同步显示上下分区线、虚线裁剪框与本次行程/胎压/综合车况示例画面），支持一键切换主题/中央视图/昼夜/导航与待机场景、手动测试切全屏（Mode 3）/回经典（Mode 1）、实车模拟预览与原车信号探测快捷入口。
+  4. **权限与副屏**：快捷管理悬浮窗权限（`TYPE_APPLICATION_OVERLAY`）、车机通知使用权（本地音乐与歌词读取）、手动选择仪表副屏 Display ID，以及**按需手动触发的「原车车况信号探测（只读）」**工具（平时行车零后台开销，仅点击时一次性只读采样并支持上传 R2 或本地保存，便于排查新车型或固件信号差异）。
+- 点击「全屏配置与预览」可打开适配车机横屏宽屏的双栏 Studio 全屏配置弹窗，自动跟随 DiPlay 当前浅色/深色主题调色板。
 
 ---
 
@@ -206,8 +216,8 @@ KX11 方向盘按键经由 `ECarXCarHardKeyService` → `com.geely.inputservice.
 
 - **新增独立模块**（`common/src/main/java/com/shilapi/xcertplay/`）：
   - `EcarxKx11HeadUnit.kt`、`EcarxLocationEnhancer.kt`、`EcarxKx11WheelKeys.kt`
-  - `GeelyClusterConfig.kt`、`GeelyEcarxHardware.kt`、`GeelyEcarxDayNightReader.kt`、`GeelyVehicleMediaObserver.kt`
-  - `GeelyFakeUltraView.kt`、`GeelyClusterThemes.kt`、`GeelyClusterExtraThemes.kt`、`GeelySelfDrawOverlay.kt`、`GeelyClusterThemeWindow.kt`、`GeelyClusterEnhancer.kt`
+  - `GeelyClusterConfig.kt`、`GeelyEcarxHardware.kt`、`GeelyEcarxDayNightReader.kt`、`GeelyVehicleMediaObserver.kt`、`GeelyVehicleTelemetry.kt`、`GeelyVehicleSignalProbe.kt`
+  - `GeelyFakeUltraView.kt`、`GeelyClusterThemes.kt`、`GeelyClusterExtraThemes.kt`、`GeelyClusterInfoPages.kt`、`GeelySelfDrawOverlay.kt`、`GeelyClusterThemeWindow.kt`、`GeelyClusterEnhancer.kt`、`GeelyClusterSettingsUi.kt`
   - `DiagnosticR2Uploader.kt`、`DiagnosticR2UploadUi.kt`
 - **上游文件最小化接入点**：
   - `AirPlayPersistence.kt`：4 处 KX11 默认值判断

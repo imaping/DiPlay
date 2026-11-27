@@ -11,7 +11,6 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.ViewGroup
@@ -48,23 +47,6 @@ internal class GeelyClusterInfoPageRenderer {
     private val glassPath = Path()
     private val iconPath = Path()
     private val integerFormatter = NumberFormat.getIntegerInstance(Locale.US)
-
-    private var toastLabel: String? = null
-    private var toastIndex: Int = 0
-    private var toastTotal: Int = 0
-    private var toastStartUptimeMs: Long = 0L
-
-    fun triggerPageSwitchToast(label: String, index: Int, total: Int) {
-        toastLabel = label
-        toastIndex = index
-        toastTotal = total
-        toastStartUptimeMs = SystemClock.uptimeMillis()
-    }
-
-    fun isToastAnimating(nowUptimeMs: Long): Boolean {
-        if (toastLabel == null || toastStartUptimeMs <= 0L) return false
-        return nowUptimeMs - toastStartUptimeMs < TOAST_TOTAL_DURATION_MS
-    }
 
     fun drawTripPage(
         canvas: Canvas,
@@ -447,75 +429,6 @@ internal class GeelyClusterInfoPageRenderer {
         canvas.drawText(fullText, cx, top + 29f, textPaint)
     }
 
-    /**
-     * Draws a brief translucent page-switch toast (`本次行程  ● ○ ○ ○`) near top-center for ~2.2 s
-     * after cycling center modes via steering-wheel button. Returns `true` while still animating.
-     */
-    fun drawPageSwitchToast(
-        canvas: Canvas,
-        style: GeelyClusterThemeStyle,
-        nightMode: Boolean,
-        accentColor: Int,
-        nowUptimeMs: Long,
-    ): Boolean {
-        val label = toastLabel ?: return false
-        val elapsed = nowUptimeMs - toastStartUptimeMs
-        if (elapsed < 0L || elapsed >= TOAST_TOTAL_DURATION_MS) {
-            toastLabel = null
-            return false
-        }
-        val alphaFrac = when {
-            elapsed < 160L -> elapsed / 160f
-            elapsed > TOAST_HOLD_MS -> 1f - (elapsed - TOAST_HOLD_MS).toFloat() / (TOAST_TOTAL_DURATION_MS - TOAST_HOLD_MS).toFloat()
-            else -> 1f
-        }.coerceIn(0f, 1f)
-        val alphaInt = (alphaFrac * 255f).roundToInt().coerceIn(0, 255)
-        val light = style.supportsLightMode && !nightMode
-
-        val cx = 960f
-        textPaint.typeface = sansMedium
-        textPaint.textSize = 21f
-        textPaint.textAlign = Paint.Align.LEFT
-        val textW = textPaint.measureText(label)
-        val dotsCount = toastTotal.coerceIn(1, 8)
-        val dotsW = if (dotsCount > 1) dotsCount * 14f + 16f else 0f
-        val contentW = textW + dotsW
-        val pillW = (contentW + 44f).coerceAtLeast(180f)
-        val top = 46f
-        val bottom = 84f
-        tempRect.set(cx - pillW / 2f, top, cx + pillW / 2f, bottom)
-
-        fillPaint.shader = null
-        val bgRgb = if (light) Color.rgb(248, 250, 252) else Color.rgb(14, 20, 32)
-        fillPaint.color = withAlpha(bgRgb, (alphaFrac * 224f).roundToInt())
-        canvas.drawRoundRect(tempRect, 19f, 19f, fillPaint)
-
-        strokePaint.strokeWidth = 1.5f
-        strokePaint.color = withAlpha(accentColor, (alphaFrac * 185f).roundToInt())
-        canvas.drawRoundRect(tempRect, 19f, 19f, strokePaint)
-
-        val contentLeft = cx - contentW / 2f
-        val fgRgb = if (light) Color.rgb(22, 30, 42) else Color.rgb(245, 248, 252)
-        textPaint.color = withAlpha(fgRgb, alphaInt)
-        canvas.drawText(label, contentLeft, top + 26.5f, textPaint)
-
-        if (dotsCount > 1) {
-            var dotX = contentLeft + textW + 20f
-            val dotY = (top + bottom) * 0.5f
-            for (i in 0 until dotsCount) {
-                val active = i == toastIndex
-                fillPaint.color = if (active) {
-                    withAlpha(accentColor, alphaInt)
-                } else {
-                    withAlpha(fgRgb, (alphaFrac * 85f).roundToInt())
-                }
-                canvas.drawCircle(dotX, dotY, if (active) 4.2f else 2.8f, fillPaint)
-                dotX += 14f
-            }
-        }
-        return true
-    }
-
     private fun drawPageHeader(
         canvas: Canvas,
         title: String,
@@ -854,9 +767,6 @@ internal class GeelyClusterInfoPageRenderer {
     )
 
     companion object {
-        private const val TOAST_HOLD_MS = 1_800L
-        private const val TOAST_TOTAL_DURATION_MS = 2_300L
-
         fun formatDurationZh(durationMs: Long): String {
             val totalMinutes = (durationMs.coerceAtLeast(0L) / 60_000L).toInt()
             val hours = totalMinutes / 60

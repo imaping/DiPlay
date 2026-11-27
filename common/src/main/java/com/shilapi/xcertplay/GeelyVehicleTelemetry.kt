@@ -244,9 +244,14 @@ internal object GeelyVehicleTelemetryReader {
     private var getLatestDrivingInfoMethod: Method? = null
     private var getLatestAvgEnergyInfoMethod: Method? = null
 
-    // Sticky caches to avoid transient single-frame 0.0 glitches (seen on 0x00400100)
+    // Sticky caches to avoid transient single-frame 0.0 / null glitches from ECARX IPC
     private var lastNonZeroTotalAvgFuel: Float? = null
     private var lastNonZeroTripAvgFuel: Float? = null
+    private var tripFuelLockedToTripData: Boolean = false
+    private var consecutiveTripFuelZeroTicks: Int = 0
+    private var lastValidNativeDistKm: Float? = null
+    private var lastValidNativeDurationMs: Long? = null
+    private var consecutiveTripZeroTicks: Int = 0
 
     // Software fallback trip accumulator (only used when native ITripData is absent)
     private var fallbackTripDistKm: Float = 0f
@@ -365,7 +370,7 @@ internal object GeelyVehicleTelemetryReader {
             if (drivingInfo != null) {
                 val distMeters = invokeZeroArgNumber(drivingInfo, "getTripDistance")?.toLong()
                 val durMs = invokeZeroArgNumber(drivingInfo, "getTripDuration")?.toLong()
-                // Filter out ODO-like sentinel when trip hasn't started (e.g. dur == 0 && dist > 1_000_000m)
+                // Filter out ODO-like sentinel when trip hasn't started (e.g. dur == 0 && dist > 500_000m)
                 val validDist = distMeters != null && distMeters >= 0L &&
                     !(durMs == 0L && distMeters > 500_000L)
                 if (validDist && distMeters != null) {
@@ -385,22 +390,49 @@ internal object GeelyVehicleTelemetryReader {
                 val fuel = invokeZeroArgNumber(avgEnergyInfo, "getAvgFuelConsumption")?.toFloat()
                 if (fuel != null && fuel.isFinite() && fuel in 0.1f..99.9f) {
                     nativeAvgFuel = fuel
-                    lastNonZeroTripAvgFuel = fuel
+                    tripFuelLockedToTripData = true
                 }
             }
         }
 
-        // Secondary native source: IVirtualSensor one-ignition avg fuel (`0x00400300`)
-        if (nativeAvgFuel == null) {
+        // Only fall back to IVirtualSensor one-ignition avg fuel (`0x00400300`) when ITripData has
+        // NOT provided avg fuel in the current trip, preventing alternating jumps between two sources.
+        if (nativeAvgFuel == null && !tripFuelLockedToTripData) {
             val oneIgnFuel = readFloat(sensor, VS_AVG_FUEL_ONE_IGNITION)
             if (oneIgnFuel != null && oneIgnFuel in 0.1f..99.9f) {
                 nativeAvgFuel = oneIgnFuel
-                lastNonZeroTripAvgFuel = oneIgnFuel
             }
         }
 
-        val effectiveDistKm = if (fromNative) nativeDistKm else fallbackTripDistKm.takeIf { it > 0f || fallbackTripDurationMs > 0L }
-        val effectiveDurMs = if (fromNative) nativeDurationMs else fallbackTripDurationMs.takeIf { it > 0L }
+        // Guard against transient single-poll 0/null glitches from ECARX IPC on distance/duration
+        if (fromNative) {
+            val isZeroReading = (nativeDistKm ?: 0f) <= 0.01f && (nativeDurationMs ?: 0L) <= 0L
+            if (isZeroReading) {
+                consecutiveTripZeroTicks++
+                if (consecutiveTripZeroTicks >= 5) {
+                    lastValidNativeDistKm = nativeDistKm
+                    lastValidNativeDurationMs = nativeDurationMs
+                } else {
+                    if (lastValidNativeDistKm != null) nativeDistKm = lastValidNativeDistKm
+                    if (lastValidNativeDurationMs != null) nativeDurationMs = lastValidNativeDurationMs
+                }
+            } else {
+                consecutiveTripZeroTicks = 0
+                if (nativeDistKm != null) lastValidNativeDistKm = nativeDistKm
+                if (nativeDurationMs != null) lastValidNativeDurationMs = nativeDurationMs
+            }
+        }
+
+        val effectiveDistKm = if (fromNative) {
+            nativeDistKm ?: lastValidNativeDistKm
+        } else {
+            fallbackTripDistKm.takeIf { it > 0f || fallbackTripDurationMs > 0L }
+        }
+        val effectiveDurMs = if (fromNative) {
+            nativeDurationMs ?: lastValidNativeDurationMs
+        } else {
+            fallbackTripDurationMs.takeIf { it > 0L }
+        }
         val avgSpeedKmh = if (effectiveDistKm != null && effectiveDurMs != null && effectiveDurMs >= 1_000L) {
             val hours = effectiveDurMs / 3_600_000f
             (effectiveDistKm / hours).takeIf { it.isFinite() && it in 0f..300f }
@@ -408,13 +440,26 @@ internal object GeelyVehicleTelemetryReader {
             null
         }
 
-        // Keep sticky non-zero trip avg fuel while trip distance > 0, clear if a new trip starts at 0
-        val effectiveTripAvgFuel = when {
-            nativeAvgFuel != null -> nativeAvgFuel
-            effectiveDistKm != null && effectiveDistKm > 0.1f -> lastNonZeroTripAvgFuel
-            else -> {
+        // Stabilize trip avg fuel:
+        // 1. Apply 0.08 L/100km deadband to prevent .1f rounding jitter (e.g. 11.149 <-> 11.151).
+        // 2. Never flash "—" on transient 0.0 blips; only clear after >= 6 consecutive zero polls
+        //    when trip distance is also back at 0 (real trip reset).
+        val effectiveTripAvgFuel = if (nativeAvgFuel != null) {
+            consecutiveTripFuelZeroTicks = 0
+            val prev = lastNonZeroTripAvgFuel
+            val stabilized = if (prev != null && abs(nativeAvgFuel - prev) < 0.08f) prev else nativeAvgFuel
+            lastNonZeroTripAvgFuel = stabilized
+            stabilized
+        } else {
+            consecutiveTripFuelZeroTicks++
+            val tripResetConfirmed = (effectiveDistKm == null || effectiveDistKm <= 0.05f) &&
+                consecutiveTripFuelZeroTicks >= 6
+            if (tripResetConfirmed) {
                 lastNonZeroTripAvgFuel = null
+                tripFuelLockedToTripData = false
                 null
+            } else {
+                lastNonZeroTripAvgFuel
             }
         }
 

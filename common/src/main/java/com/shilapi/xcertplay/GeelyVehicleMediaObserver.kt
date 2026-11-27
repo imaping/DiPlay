@@ -36,6 +36,13 @@ internal data class GeelyVehicleMediaSnapshot(
     val playing: Boolean = false,
     val active: Boolean = false,
     val packageName: String? = null,
+    val title: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
+    val durationMillis: Long? = null,
+    val positionMillis: Long? = null,
+    val positionAtElapsedMs: Long = 0L,
+    val playbackSpeed: Float = 1f,
 ) {
     val hasContent: Boolean
         get() = active && artwork != null && !artwork.isRecycled
@@ -140,8 +147,9 @@ internal object GeelyVehicleMediaObserver {
     private var sessionsListenerRegistered = false
     private val trackedControllers = linkedMapOf<MediaController, MediaController.Callback>()
 
-    // Notification-sourced fallback album icons keyed by package name
+    // Notification-sourced fallback album icons & text metadata keyed by package name
     private val notifArtworkByPkg = HashMap<String, Bitmap>()
+    private val notifMetaByPkg = HashMap<String, Pair<String?, String?>>()
 
     // Artwork URI decode cache (bounded LRU-style LinkedHashMap)
     private val uriBitmapCache = LinkedHashMap<String, Bitmap>(MAX_URI_CACHE_ENTRIES + 1, 0.75f, true)
@@ -228,25 +236,36 @@ internal object GeelyVehicleMediaObserver {
         if (!isLikelyMediaNotification(pkg, notification)) return
 
         val largeBitmap = extractNotificationLargeBitmap(context, notification)
-        if (largeBitmap != null && !largeBitmap.isRecycled) {
-            val changed = synchronized(lock) {
-                if (notifArtworkByPkg[pkg] !== largeBitmap) {
-                    notifArtworkByPkg[pkg] = largeBitmap
-                    true
-                } else {
-                    false
+        val notifTitle = notification.extras?.getCharSequence(Notification.EXTRA_TITLE)
+            ?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        val notifText = notification.extras?.getCharSequence(Notification.EXTRA_TEXT)
+            ?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        val changed = synchronized(lock) {
+            var dirty = false
+            if (largeBitmap != null && !largeBitmap.isRecycled && notifArtworkByPkg[pkg] !== largeBitmap) {
+                notifArtworkByPkg[pkg] = largeBitmap
+                dirty = true
+            }
+            if (notifTitle != null || notifText != null) {
+                val pair = notifTitle to notifText
+                if (notifMetaByPkg[pkg] != pair) {
+                    notifMetaByPkg[pkg] = pair
+                    dirty = true
                 }
             }
-            if (changed) {
-                recomputeAndPublish()
-            }
+            dirty
+        }
+        if (changed) {
+            recomputeAndPublish()
         }
     }
 
     internal fun onNotificationRemoved(sbn: StatusBarNotification) {
         val pkg = sbn.packageName ?: return
         val changed = synchronized(lock) {
-            notifArtworkByPkg.remove(pkg) != null
+            val a = notifArtworkByPkg.remove(pkg) != null
+            val m = notifMetaByPkg.remove(pkg) != null
+            a || m
         }
         if (changed) {
             recomputeAndPublish()
@@ -261,6 +280,7 @@ internal object GeelyVehicleMediaObserver {
         mainHandler.removeCallbacks(pauseExpiryTick)
         detachMediaSessionListenerLocked()
         notifArtworkByPkg.clear()
+        notifMetaByPkg.clear()
         pausedSinceElapsedMs = 0L
         pendingArtworkUri = null
         latestSnapshot = GeelyVehicleMediaSnapshot()
@@ -415,14 +435,27 @@ internal object GeelyVehicleMediaObserver {
                 }
 
                 val meta = selected.metadata
+                val notifFallback = notifMetaByPkg[pkg]
+                val title = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+                        ?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: notifFallback?.first
                 val artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST)
                     ?.trim()?.takeIf { it.isNotEmpty() }
                     ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
                         ?.trim()?.takeIf { it.isNotEmpty() }
                     ?: meta?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
                         ?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: notifFallback?.second
                 val album = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM)
                     ?.trim()?.takeIf { it.isNotEmpty() }
+                val durationMillis = meta?.getLong(MediaMetadata.METADATA_KEY_DURATION)
+                    ?.takeIf { it > 0L }
+                val pbState = selected.playbackState
+                val positionMillis = pbState?.position?.takeIf { it >= 0L }
+                val positionAtElapsedMs = pbState?.lastPositionUpdateTime?.takeIf { it > 0L } ?: now
+                val playbackSpeed = pbState?.playbackSpeed?.takeIf { it > 0f } ?: if (isPlaying) 1f else 0f
 
                 // Resolve artwork: MediaMetadata Bitmap -> MediaMetadata URI -> Notification LargeIcon -> Retained
                 var art = extractMetadataBitmap(meta)
@@ -466,6 +499,13 @@ internal object GeelyVehicleMediaObserver {
                     playing = isPlaying,
                     active = true,
                     packageName = pkg,
+                    title = title,
+                    artist = artist,
+                    album = album,
+                    durationMillis = durationMillis,
+                    positionMillis = positionMillis,
+                    positionAtElapsedMs = positionAtElapsedMs,
+                    playbackSpeed = playbackSpeed,
                 )
             }
 
@@ -656,7 +696,14 @@ internal object GeelyVehicleMediaObserver {
         a.active == b.active &&
             a.playing == b.playing &&
             a.artwork === b.artwork &&
-            a.packageName == b.packageName
+            a.packageName == b.packageName &&
+            a.title == b.title &&
+            a.artist == b.artist &&
+            a.album == b.album &&
+            a.durationMillis == b.durationMillis &&
+            a.positionMillis == b.positionMillis &&
+            a.positionAtElapsedMs == b.positionAtElapsedMs &&
+            a.playbackSpeed == b.playbackSpeed
 
     private fun runOnMain(action: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
