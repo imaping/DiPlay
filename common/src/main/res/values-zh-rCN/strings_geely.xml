@@ -2,4 +2,5 @@
 <resources>
     <string name="geely_settings_title">吉利设置</string>
     <string name="geely_settings_summary">全境仪表主题、导航卡片、抬头显示与方向盘快捷控制</string>
+    <string name="geely_car_brand_default">默认（吉利）</string>
 </resources>

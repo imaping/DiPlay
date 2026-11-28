@@ -2,4 +2,5 @@
 <resources>
     <string name="geely_settings_title">Geely</string>
     <string name="geely_settings_summary">Mecha cluster themes, navigation cards, W-HUD and Geely controls</string>
+    <string name="geely_car_brand_default">Default (Geely)</string>
 </resources>

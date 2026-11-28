@@ -13,7 +13,7 @@ enum class CarBrandBadge(
     val labelRes: Int,
     val iconRawRes: Int,
 ) {
-    DEFAULT("default", R.string.settings_car_brand_default, R.raw.ic_car_home),
+    DEFAULT("default", GeelyCarButtonDefaults.DEFAULT_LABEL_RES, GeelyCarButtonDefaults.DEFAULT_ICON_RAW_RES),
     WANGCHAO("wangchao", R.string.settings_car_brand_wangchao, R.raw.ic_car_wangchao),
     HAIYANG("haiyang", R.string.settings_car_brand_haiyang, R.raw.ic_car_haiyang),
     FANGCHENGBAO(
