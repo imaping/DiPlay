@@ -32,7 +32,7 @@ internal object GeelyClusterBootLauncher {
         if (!GeelyVehicleDetector.isGeelyOrEcarx(app)) return false
 
         val cfg = GeelyClusterPrefs.load(app)
-        if (!cfg.launchThemeOnStart || !cfg.hasAnyClusterVisual) return false
+        if (!cfg.hasClusterThemeCapability) return false
 
         val overlayGranted = Settings.canDrawOverlays(app)
         if (overlayGranted) {

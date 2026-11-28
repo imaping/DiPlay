@@ -35,7 +35,7 @@ internal enum class GeelyKx11SettingsCategory(
     val iconRes: Int,
 ) {
     CONNECTION("连接与启动", "无线/USB · 自动启动 · iPhone", R.drawable.ic_dp_connection),
-    CLUSTER("全境仪表与 HUD", "6 套主题 · 导航卡 · W-HUD · 歌词", R.drawable.ic_dp_dashboard),
+    CLUSTER("全境仪表与 HUD", "原车/纯地图/机甲主题 · W-HUD · 歌词", R.drawable.ic_dp_dashboard),
     WHEEL("方向盘与操控", "语音键 Siri · 微信键切屏 · 手势", R.drawable.ic_dp_controls),
     DISPLAY("显示与画面", "60fps · 昼夜同步 · 缩放 · 系统栏", R.drawable.ic_dp_display),
     AUDIO("音频与定位", "音频焦点 · 通道 · CAN 轮速融合", R.drawable.ic_dp_audio),
@@ -488,9 +488,14 @@ internal object GeelyKx11ShellUi {
                 typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             },
         )
+        val homeClusterSub = when {
+            cfg.dialThemeStyle.isOemNative -> "主题：${cfg.dialThemeStyle.shortLabel} · 保留 W-HUD 与经典导航卡"
+            cfg.dialThemeStyle.isPureMap -> "主题：${cfg.dialThemeStyle.shortLabel} · 下方保留音乐 · 无图回落原车"
+            else -> "主题：${cfg.dialThemeStyle.shortLabel} · 视图：${cfg.centerMode.shortLabel}"
+        }
         clusterTitleCol.addView(
             TextView(act).apply {
-                text = "主题：${cfg.dialThemeStyle.shortLabel} · 视图：${cfg.centerMode.shortLabel}"
+                text = homeClusterSub
                 setTextColor(ui.colors.secondaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setSingleLine(true)

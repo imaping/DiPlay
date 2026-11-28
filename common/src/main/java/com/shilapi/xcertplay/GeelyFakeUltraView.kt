@@ -1251,9 +1251,12 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
     }
 
     private fun updatePollingState() {
-        val shouldPoll = isAttachedToWindow && !previewMode && (
-            config.dialLeftEnabled || config.dialRightEnabled || config.bottomBarEnabled ||
-                config.centerMode.isTelemetryPage || config.tireAlertPopupEnabled
+        val style = config.dialThemeStyle
+        val shouldPoll = isAttachedToWindow && !previewMode && !style.isOemNative && (
+            (style.usesDialChrome && (config.dialLeftEnabled || config.dialRightEnabled)) ||
+                config.bottomBarEnabled ||
+                config.centerMode.isTelemetryPage ||
+                config.tireAlertPopupEnabled
             )
         if (!shouldPoll) {
             stopPolling()
@@ -1295,11 +1298,17 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         super.onDraw(canvas)
         if (width <= 0 || height <= 0) return
 
+        val themeStyle = config.dialThemeStyle
+        if (themeStyle.isOemNative) return
+
         val save = canvas.save()
         canvas.scale(width / 1920f, height / 720f)
         val nowElapsed = SystemClock.elapsedRealtime()
         var needsNextFrame = false
-        val themeStyle = config.dialThemeStyle
+        val isPureMap = themeStyle.isPureMap
+        val showLeftDial = !isPureMap && config.dialLeftEnabled
+        val showRightDial = !isPureMap && config.dialRightEnabled
+        val showMapVignette = !isPureMap && config.mapVignetteEnabled
 
         val hasCarPlayFeed = carPlayConnected || previewMode
         val hasCarPlayAudio = hasCarPlayFeed || carPlayMediaActive
@@ -1363,7 +1372,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
             GeelyClusterCenterMode.TIRE -> GeelyClusterCenterMode.TIRE
             GeelyClusterCenterMode.VEHICLE_INFO -> GeelyClusterCenterMode.VEHICLE_INFO
             GeelyClusterCenterMode.AUTO -> when {
-                effectiveRouteActive || hasNativeMap -> GeelyClusterCenterMode.MAP
+                (isPureMap && hasMapSource) || effectiveRouteActive || hasNativeMap -> GeelyClusterCenterMode.MAP
                 config.albumArtEnabled && hasAlbumArt -> GeelyClusterCenterMode.ALBUM
                 else -> GeelyClusterCenterMode.CLOCK
             }
@@ -1415,7 +1424,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                 }
             }
             GeelyClusterCenterMode.MAP -> {
-                if (config.mapVignetteEnabled) {
+                if (showMapVignette) {
                     ultraThemeRenderer.drawThemeVignette(canvas, themeStyle, nightMode, currentAccent, routeActive = true)
                 }
             }
@@ -1466,7 +1475,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         }
 
         // 2. Left Dial (Speedometer + Fuel %) raised & scaled cleanly above OEM bottom bar
-        if (config.dialLeftEnabled) {
+        if (showLeftDial) {
             val leftSave = canvas.save()
             canvas.translate(LEFT_DIAL_X, DIAL_TOP_Y)
             canvas.scale(DIAL_SCALE, DIAL_SCALE)
@@ -1487,7 +1496,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
         }
 
         // 3. Right Dial (Tachometer / Gear / Album Art when navigating)
-        if (config.dialRightEnabled) {
+        if (showRightDial) {
             val rightSave = canvas.save()
             canvas.translate(RIGHT_DIAL_X, DIAL_TOP_Y)
             canvas.scale(DIAL_SCALE, DIAL_SCALE)
@@ -1527,6 +1536,7 @@ internal class GeelyFakeUltraOverlayView(context: Context) : View(context) {
                         nowMs = nowUptime,
                         fallbackTime = timeText,
                         fallbackFuel = fallbackFuel,
+                        overBareMap = isPureMap && showingCenterMap,
                     )
                 ) {
                     needsNextFrame = true

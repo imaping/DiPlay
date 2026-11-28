@@ -100,7 +100,7 @@ class GeelyClusterKeepAliveService : Service() {
         }
 
         val cfg = GeelyClusterPrefs.load(applicationContext)
-        val shouldRun = cfg.launchThemeOnStart && cfg.hasAnyClusterVisual
+        val shouldRun = cfg.hasClusterThemeCapability
 
         val openIntent = Intent(this, DiPlayActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -137,10 +137,17 @@ class GeelyClusterKeepAliveService : Service() {
             Notification.Builder(this).setPriority(Notification.PRIORITY_LOW)
         }
 
+        val statusSummary = when {
+            cfg.dialThemeStyle.isOemNative -> "当前主题：原车经典（按键可随时切出）"
+            cfg.dialThemeStyle.isPureMap && !GeelyClusterEnhancer.isPersistentThemeActive() ->
+                "当前主题：纯地图全屏（等待地图投屏，已回落原车）"
+            else -> "当前主题：${cfg.dialThemeStyle.displayName}"
+        }
+
         val notification = builder
             .setSmallIcon(R.drawable.ic_diplay_notification)
             .setContentTitle("DiPlay 仪表主题运行中")
-            .setContentText("当前主题：${cfg.dialThemeStyle.displayName}")
+            .setContentText(statusSummary)
             .setContentIntent(openPending)
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, "关闭主题", stopPending).build())
@@ -167,9 +174,9 @@ class GeelyClusterKeepAliveService : Service() {
 
         if (intent?.action == ACTION_BOOT_LAUNCH) {
             GeelyClusterEnhancer.onBootKeepAliveStarted(applicationContext)
-        } else if (!GeelyClusterEnhancer.isPersistentThemeActive()) {
-            // Re-attach the cluster theme window if the service was restarted via START_STICKY
-            // after a process kill or if the overlay was detached while running in the background.
+        } else if (intent?.action != ACTION_SYNC && !GeelyClusterEnhancer.isPersistentThemeActive()) {
+            // Re-attach the cluster theme runtime if the service was restarted via START_STICKY
+            // after a process kill or started directly without an active enhancer sync.
             GeelyClusterEnhancer.onKeepAliveServiceStarted(applicationContext)
         }
         return START_STICKY
@@ -177,7 +184,7 @@ class GeelyClusterKeepAliveService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val cfg = GeelyClusterPrefs.load(applicationContext)
-        if (cfg.launchThemeOnStart && cfg.hasAnyClusterVisual &&
+        if (cfg.hasClusterThemeCapability &&
             GeelyVehicleDetector.isGeelyOrEcarx(applicationContext)
         ) {
             GeelyClusterEnhancer.onKeepAliveTaskRemoved(applicationContext)
@@ -196,10 +203,12 @@ class GeelyClusterKeepAliveService : Service() {
         private const val REQ_STOP = 42072
         const val ACTION_STOP = "com.shilapi.xcertplay.GEELY_CLUSTER_THEME_STOP"
         const val ACTION_BOOT_LAUNCH = "com.shilapi.xcertplay.GEELY_CLUSTER_THEME_BOOT_LAUNCH"
+        const val ACTION_SYNC = "com.shilapi.xcertplay.GEELY_CLUSTER_THEME_SYNC"
 
         fun start(context: Context) {
             val app = context.applicationContext
             val intent = Intent(app, GeelyClusterKeepAliveService::class.java)
+                .setAction(ACTION_SYNC)
             runCatching {
                 ContextCompat.startForegroundService(app, intent)
             }

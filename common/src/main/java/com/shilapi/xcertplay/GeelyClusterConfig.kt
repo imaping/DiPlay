@@ -117,11 +117,25 @@ internal enum class GeelyClusterSwitchTrigger(
     fun next(): GeelyClusterSwitchTrigger = entries[(ordinal + 1) % entries.size]
 
     companion object {
+        private val FALLBACK_ORDER = listOf(LONG_PRESS, DOUBLE_CLICK, SINGLE_CLICK)
+
         fun fromName(
             raw: String?,
             defaultValue: GeelyClusterSwitchTrigger = SINGLE_CLICK,
         ): GeelyClusterSwitchTrigger =
             entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: defaultValue
+
+        /**
+         * Returns [preferred] if it does not collide with [used], otherwise picks the first
+         * remaining gesture in [FALLBACK_ORDER] (preferring zero-delay LONG_PRESS before DOUBLE_CLICK).
+         */
+        fun resolveNonConflicting(
+            preferred: GeelyClusterSwitchTrigger,
+            used: Set<GeelyClusterSwitchTrigger>,
+        ): GeelyClusterSwitchTrigger {
+            if (preferred !in used) return preferred
+            return FALLBACK_ORDER.firstOrNull { it !in used } ?: preferred
+        }
     }
 }
 
@@ -131,6 +145,18 @@ internal enum class GeelyClusterThemeStyle(
     val description: String,
     val supportsLightMode: Boolean = true,
 ) {
+    OEM_CLASSIC(
+        displayName = "原车经典 · 默认主驾",
+        shortLabel = "原车经典",
+        description = "保持原车 QNX 默认主驾界面，同时保留 CarPlay W-HUD 与经典仪表导航卡（方向盘可随时切出）",
+        supportsLightMode = true,
+    ),
+    PURE_MAP(
+        displayName = "纯地图全屏 · 极简沉浸",
+        shortLabel = "纯地图全屏",
+        description = "隐藏左右圆盘与边缘遮罩、下方保留音乐栏；无地图投屏时自动回落原车经典仪表（支持昼夜）",
+        supportsLightMode = true,
+    ),
     AERO_MECHA(
         displayName = "机甲光翼 · 未来战术",
         shortLabel = "机甲光翼",
@@ -168,12 +194,41 @@ internal enum class GeelyClusterThemeStyle(
         supportsLightMode = true,
     );
 
-    fun defaultAccentColor(nightMode: Boolean): Int =
-        GeelyClusterThemeSpecs.of(this).defaultAccentColor(nightMode)
+    val isOemNative: Boolean
+        get() = this == OEM_CLASSIC
+
+    val isPureMap: Boolean
+        get() = this == PURE_MAP
+
+    val usesDialChrome: Boolean
+        get() = !isOemNative && !isPureMap
+
+    fun defaultAccentColor(nightMode: Boolean): Int = when (this) {
+        OEM_CLASSIC -> if (nightMode) 0xFF94A3B8.toInt() else 0xFF475569.toInt()
+        PURE_MAP -> if (nightMode) 0xFF38BDF8.toInt() else 0xFF0284C7.toInt()
+        else -> GeelyClusterThemeSpecs.of(this).defaultAccentColor(nightMode)
+    }
 
     companion object {
+        val DEFAULT_CYCLE_STYLES: Set<GeelyClusterThemeStyle> = linkedSetOf(
+            OEM_CLASSIC,
+            PURE_MAP,
+            AERO_MECHA,
+        )
+
         fun fromName(raw: String?): GeelyClusterThemeStyle =
             entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: AERO_MECHA
+
+        fun parseCycleStyles(raw: String?): Set<GeelyClusterThemeStyle> {
+            if (raw.isNullOrBlank()) return DEFAULT_CYCLE_STYLES
+            val parsed = raw.split(',')
+                .mapNotNull { token -> entries.firstOrNull { it.name.equals(token.trim(), ignoreCase = true) } }
+                .toCollection(LinkedHashSet())
+            return if (parsed.isEmpty()) DEFAULT_CYCLE_STYLES else parsed
+        }
+
+        fun serializeCycleStyles(styles: Set<GeelyClusterThemeStyle>): String =
+            entries.filter { it in styles }.joinToString(",") { it.name }
     }
 }
 
@@ -238,6 +293,9 @@ internal data class GeelySelfDrawConfig(
     val telemetrySwitchKeyCode: Int = 0,
     val telemetrySwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
     val telemetryCycleModes: Set<GeelyClusterCenterMode> = GeelyClusterCenterMode.DEFAULT_TELEMETRY_MODES,
+    val themeSwitchKeyCode: Int = 0,
+    val themeSwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
+    val themeCycleStyles: Set<GeelyClusterThemeStyle> = GeelyClusterThemeStyle.DEFAULT_CYCLE_STYLES,
     val tireAlertPopupEnabled: Boolean = true,
     val navAutoReturnSeconds: Int = DEFAULT_NAV_AUTO_RETURN_SECONDS,
     val interceptVoiceKeyForSiri: Boolean = false,
@@ -256,11 +314,33 @@ internal data class GeelySelfDrawConfig(
     val sharesTelemetryKeyWithPrimary: Boolean
         get() = centerSwitchKeyCode > 0 && (telemetrySwitchKeyCode <= 0 || telemetrySwitchKeyCode == centerSwitchKeyCode)
 
+    val sharesThemeKeyWithPrimary: Boolean
+        get() = themeSwitchKeyCode > 0 && themeSwitchKeyCode == centerSwitchKeyCode
+
+    val sharesThemeKeyWithTelemetry: Boolean
+        get() = themeSwitchKeyCode > 0 && themeSwitchKeyCode == effectiveTelemetrySwitchKeyCode
+
     val hasAnySelfDrawOverlay: Boolean
         get() = hudEnabled || cardEnabled || fullscreenCardEnabled || laneEnabled || previewEnabled
 
     val hasAnyClusterVisual: Boolean
-        get() = dialLeftEnabled || dialRightEnabled || albumArtEnabled || bottomBarEnabled || mapVignetteEnabled
+        get() = when {
+            dialThemeStyle.isOemNative -> false
+            dialThemeStyle.isPureMap -> true
+            else -> dialLeftEnabled || dialRightEnabled || albumArtEnabled || bottomBarEnabled || mapVignetteEnabled
+        }
+
+    /**
+     * Whether persistent cluster theme standby & wheel-key theme switching should stay active
+     * even when the currently selected theme is [GeelyClusterThemeStyle.OEM_CLASSIC] or
+     * [GeelyClusterThemeStyle.PURE_MAP] waiting for a map source.
+     */
+    val hasClusterThemeCapability: Boolean
+        get() = launchThemeOnStart && (
+            hasAnyClusterVisual ||
+                dialThemeStyle.isOemNative ||
+                themeSwitchKeyCode > 0
+            )
 }
 
 internal object GeelyClusterPrefs {
@@ -295,6 +375,9 @@ internal object GeelyClusterPrefs {
     private const val KEY_TELEMETRY_SWITCH_KEY_CODE = "self_draw_telemetry_switch_key_code"
     private const val KEY_TELEMETRY_SWITCH_TRIGGER = "self_draw_telemetry_switch_trigger"
     private const val KEY_TELEMETRY_CYCLE_MODES = "self_draw_telemetry_cycle_modes"
+    private const val KEY_THEME_SWITCH_KEY_CODE = "self_draw_theme_switch_key_code"
+    private const val KEY_THEME_SWITCH_TRIGGER = "self_draw_theme_switch_trigger"
+    private const val KEY_THEME_CYCLE_STYLES = "self_draw_theme_cycle_styles"
     private const val KEY_TIRE_ALERT_POPUP_ENABLED = "self_draw_tire_alert_popup_enabled"
     private const val KEY_NAV_AUTO_RETURN_SECONDS = "self_draw_nav_auto_return_seconds"
     private const val KEY_INTERCEPT_VOICE_KEY_FOR_SIRI = "self_draw_intercept_voice_key_for_siri"
@@ -327,6 +410,7 @@ internal object GeelyClusterPrefs {
         val defaultPrimaryKey = if (EcarxKx11HeadUnit.detected) EcarxKx11WheelKeys.KEY_WECHAT else 0
         val primaryKeyCode = sp.getInt(KEY_CENTER_SWITCH_KEY_CODE, defaultPrimaryKey)
         val telemetryKeyCode = sp.getInt(KEY_TELEMETRY_SWITCH_KEY_CODE, 0)
+        val themeKeyCode = sp.getInt(KEY_THEME_SWITCH_KEY_CODE, 0)
         val primaryTrigger = GeelyClusterSwitchTrigger.fromName(
             sp.getString(KEY_CENTER_SWITCH_TRIGGER, null),
             defaultValue = GeelyClusterSwitchTrigger.SINGLE_CLICK,
@@ -335,16 +419,24 @@ internal object GeelyClusterPrefs {
             sp.getString(KEY_TELEMETRY_SWITCH_TRIGGER, null),
             defaultValue = GeelyClusterSwitchTrigger.LONG_PRESS,
         )
+        val rawThemeTrigger = GeelyClusterSwitchTrigger.fromName(
+            sp.getString(KEY_THEME_SWITCH_TRIGGER, null),
+            defaultValue = GeelyClusterSwitchTrigger.LONG_PRESS,
+        )
         val sharesKey = primaryKeyCode > 0 && (telemetryKeyCode <= 0 || telemetryKeyCode == primaryKeyCode)
-        val telemetryTrigger = if (sharesKey && rawTelemetryTrigger == primaryTrigger) {
-            when (primaryTrigger) {
-                GeelyClusterSwitchTrigger.SINGLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
-                GeelyClusterSwitchTrigger.LONG_PRESS -> GeelyClusterSwitchTrigger.DOUBLE_CLICK
-                GeelyClusterSwitchTrigger.DOUBLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
-            }
+        val telemetryTrigger = if (sharesKey) {
+            GeelyClusterSwitchTrigger.resolveNonConflicting(rawTelemetryTrigger, setOf(primaryTrigger))
         } else {
             rawTelemetryTrigger
         }
+        val effectiveTelemetryKey = if (telemetryKeyCode > 0) telemetryKeyCode else primaryKeyCode
+        val usedBySameKeyAsTheme = LinkedHashSet<GeelyClusterSwitchTrigger>()
+        if (themeKeyCode > 0) {
+            if (themeKeyCode == primaryKeyCode) usedBySameKeyAsTheme.add(primaryTrigger)
+            if (themeKeyCode == effectiveTelemetryKey) usedBySameKeyAsTheme.add(telemetryTrigger)
+        }
+        val themeTrigger = GeelyClusterSwitchTrigger.resolveNonConflicting(rawThemeTrigger, usedBySameKeyAsTheme)
+        val themeCycleStyles = GeelyClusterThemeStyle.parseCycleStyles(sp.getString(KEY_THEME_CYCLE_STYLES, null))
         return GeelySelfDrawConfig(
             hudEnabled = sp.getBoolean(KEY_HUD_ENABLED, true),
             cardEnabled = sp.getBoolean(KEY_CARD_ENABLED, true),
@@ -377,6 +469,9 @@ internal object GeelyClusterPrefs {
             telemetrySwitchKeyCode = telemetryKeyCode,
             telemetrySwitchTrigger = telemetryTrigger,
             telemetryCycleModes = telemetryModes,
+            themeSwitchKeyCode = themeKeyCode,
+            themeSwitchTrigger = themeTrigger,
+            themeCycleStyles = themeCycleStyles,
             tireAlertPopupEnabled = sp.getBoolean(KEY_TIRE_ALERT_POPUP_ENABLED, true),
             navAutoReturnSeconds = sp.getInt(
                 KEY_NAV_AUTO_RETURN_SECONDS,
@@ -417,6 +512,9 @@ internal object GeelyClusterPrefs {
             .putInt(KEY_TELEMETRY_SWITCH_KEY_CODE, config.telemetrySwitchKeyCode)
             .putString(KEY_TELEMETRY_SWITCH_TRIGGER, config.telemetrySwitchTrigger.name)
             .putString(KEY_TELEMETRY_CYCLE_MODES, GeelyClusterCenterMode.serializeTelemetryModes(config.telemetryCycleModes))
+            .putInt(KEY_THEME_SWITCH_KEY_CODE, config.themeSwitchKeyCode)
+            .putString(KEY_THEME_SWITCH_TRIGGER, config.themeSwitchTrigger.name)
+            .putString(KEY_THEME_CYCLE_STYLES, GeelyClusterThemeStyle.serializeCycleStyles(config.themeCycleStyles))
             .putString(KEY_CYCLE_MODES, GeelyClusterCenterMode.serializeCycleModes(config.cycleModes))
             .putBoolean(KEY_TIRE_ALERT_POPUP_ENABLED, config.tireAlertPopupEnabled)
             .putInt(KEY_NAV_AUTO_RETURN_SECONDS, config.navAutoReturnSeconds.coerceIn(0, 60))

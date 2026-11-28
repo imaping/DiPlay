@@ -151,7 +151,7 @@ internal fun formatGeelyWheelKey(code: Int): String {
         EcarxKx11WheelKeys.KEY_SRC -> "音源键"
         EcarxKx11WheelKeys.KEY_SEEK_NEXT -> "下搜台键"
         EcarxKx11WheelKeys.KEY_SEEK_PREVIOUS -> "上搜台键"
-        else -> null
+        else -> EcarxKx11WheelKeys.discoveredKeyLabel(code)
     }
     return if (name != null) "$name ($code)" else "按键 $code"
 }
@@ -160,6 +160,8 @@ private fun themeSubtitleTag(style: GeelyClusterThemeStyle): String =
     style.displayName.substringAfter("·", "").trim()
 
 private fun themeCompactSummary(style: GeelyClusterThemeStyle): String = when (style) {
+    GeelyClusterThemeStyle.OEM_CLASSIC -> "保持原车 QNX 默认界面 · 保留 W-HUD 与经典卡"
+    GeelyClusterThemeStyle.PURE_MAP -> "无圆盘无遮罩 · 下方保留音乐 · 无图自动回落原车"
     GeelyClusterThemeStyle.AERO_MECHA -> "战术切角双翼 · 28 格 LED 能量块"
     GeelyClusterThemeStyle.HYPER_WING -> "C 形镜像光翼 · 24 枚渐宽能量刃"
     GeelyClusterThemeStyle.VALKYRIE_HEX -> "八边形双层装甲 · 13 颗联动节点"
@@ -203,6 +205,57 @@ private class GeelyThemeGlyphView(
         val dimColor = if (night) Color.argb(48, 255, 255, 255) else Color.argb(46, 15, 23, 42)
 
         when (style) {
+            GeelyClusterThemeStyle.OEM_CLASSIC -> {
+                rectF.set(3f, 7f, 45f, 41f)
+                fillPaint.color = bgColor
+                canvas.drawRoundRect(rectF, 10f, 10f, fillPaint)
+                strokePaint.color = dimColor
+                strokePaint.strokeWidth = 1.5f
+                strokePaint.pathEffect = null
+                canvas.drawRoundRect(rectF, 10f, 10f, strokePaint)
+
+                // Classic OEM twin circular gauges
+                strokePaint.color = accentColor
+                strokePaint.strokeWidth = 2.1f
+                canvas.drawCircle(15.5f, 22f, 7.2f, strokePaint)
+                canvas.drawCircle(32.5f, 22f, 7.2f, strokePaint)
+
+                textPaint.color = accentColor
+                textPaint.textSize = 8.5f
+                textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+                canvas.drawText("OEM", 24f, 36.5f, textPaint)
+            }
+            GeelyClusterThemeStyle.PURE_MAP -> {
+                rectF.set(3f, 7f, 45f, 41f)
+                fillPaint.color = bgColor
+                canvas.drawRoundRect(rectF, 10f, 10f, fillPaint)
+                strokePaint.color = accentColor
+                strokePaint.strokeWidth = 1.6f
+                strokePaint.pathEffect = null
+                canvas.drawRoundRect(rectF, 10f, 10f, strokePaint)
+
+                // Full-bleed road horizon & navigation route arrow
+                strokePaint.color = dimColor
+                strokePaint.strokeWidth = 1.3f
+                canvas.drawLine(9f, 29f, 19f, 16f, strokePaint)
+                canvas.drawLine(39f, 29f, 29f, 16f, strokePaint)
+
+                path.reset()
+                path.moveTo(24f, 12.5f)
+                path.lineTo(29.5f, 25f)
+                path.lineTo(24f, 22f)
+                path.lineTo(18.5f, 25f)
+                path.close()
+                fillPaint.color = accentColor
+                canvas.drawPath(path, fillPaint)
+
+                // Bottom music EQ bars indicator
+                fillPaint.color = accentColor
+                canvas.drawRoundRect(16f, 33.5f, 18.2f, 36.8f, 1f, 1f, fillPaint)
+                canvas.drawRoundRect(19.5f, 31.5f, 21.7f, 36.8f, 1f, 1f, fillPaint)
+                canvas.drawRoundRect(23f, 33f, 25.2f, 36.8f, 1f, 1f, fillPaint)
+                canvas.drawRoundRect(27.5f, 34f, 33.5f, 36f, 1f, 1f, fillPaint)
+            }
             GeelyClusterThemeStyle.AERO_MECHA -> {
                 buildOctagon(path, 24f, 24f, 20f)
                 fillPaint.color = bgColor
@@ -469,48 +522,90 @@ internal class GeelyCompositePreviewView(context: Context) : View(context) {
         canvas.translate(dx, dy)
         canvas.scale(scale, scale)
 
-        // 1. Upper 1920x720 simulated map background
+        // 1. Upper 1920x720 simulated map / OEM cluster background
         val previewNight = GeelyClusterEnhancer.resolveEffectiveNightMode(config, context)
-        bgPaint.color = if (previewNight) Color.rgb(16, 26, 36) else Color.rgb(218, 226, 235)
+        val isOemPreview = config.dialThemeStyle.isOemNative
+        val isPureMapPreview = config.dialThemeStyle.isPureMap
+        bgPaint.color = when {
+            isOemPreview -> if (previewNight) Color.rgb(12, 17, 26) else Color.rgb(225, 232, 240)
+            else -> if (previewNight) Color.rgb(16, 26, 36) else Color.rgb(218, 226, 235)
+        }
         canvas.drawRect(0f, 0f, 1920f, 720f, bgPaint)
+
+        // Subtle simulated navigation road grid when previewing Pure Map full-bleed mode
+        if (isPureMapPreview) {
+            val roadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 6f
+                color = if (previewNight) Color.argb(46, 96, 165, 250) else Color.argb(58, 37, 99, 235)
+            }
+            canvas.drawLine(960f, 170f, 440f, 720f, roadPaint)
+            canvas.drawLine(960f, 170f, 1480f, 720f, roadPaint)
+            roadPaint.strokeWidth = 10f
+            roadPaint.color = if (previewNight) Color.argb(150, 56, 189, 248) else Color.argb(175, 2, 132, 199)
+            canvas.drawLine(960f, 650f, 960f, 260f, roadPaint)
+        }
 
         // 2. Lower 1920x360 (Y: 720..1080) hardware crop region
         bgPaint.color = Color.rgb(8, 11, 16)
         canvas.drawRect(0f, 720f, 1920f, 1080f, bgPaint)
 
-        // 3. Render dual dials, vignette, center clock / album / map & bottom bar in 1920x720
-        val showAlbum = config.centerMode == GeelyClusterCenterMode.ALBUM
-        val previewCarPlay = previewRouteActive ||
-            config.centerMode == GeelyClusterCenterMode.MAP ||
-            showAlbum
-        fakeUltraView.carPlayConnected = previewCarPlay
-        fakeUltraView.carPlayMediaActive = showAlbum || previewRouteActive
-        fakeUltraView.nightMode = previewNight
-        if (showAlbum) {
-            fakeUltraView.setArtwork(demoPreviewArtwork)
-            fakeUltraView.setMusicInfo("千千阙歌 · 陈慧娴", true)
-        } else if (previewRouteActive) {
-            fakeUltraView.setArtwork(demoPreviewArtwork)
-            fakeUltraView.setMusicInfo("千千阙歌 · 陈慧娴", true)
+        // 3. Render OEM classic schematic or dual dials / pure map & bottom bar in 1920x720
+        if (isOemPreview) {
+            val oemRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 12f
+                color = if (previewNight) Color.argb(82, 148, 163, 184) else Color.argb(92, 71, 85, 105)
+            }
+            canvas.drawCircle(370f, 360f, 200f, oemRingPaint)
+            canvas.drawCircle(1550f, 360f, 200f, oemRingPaint)
+            val oemTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textAlign = Paint.Align.CENTER
+                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+                textSize = 44f
+                color = if (previewNight) Color.rgb(226, 232, 240) else Color.rgb(30, 41, 59)
+            }
+            val oemSubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textAlign = Paint.Align.CENTER
+                typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                textSize = 26f
+                color = if (previewNight) Color.rgb(148, 163, 184) else Color.rgb(71, 85, 105)
+            }
+            canvas.drawText("原车经典主驾仪表（QNX Mode 1）", 960f, 342f, oemTitlePaint)
+            canvas.drawText("不覆盖主画面 · 下方 W-HUD 与经典仪表导航卡正常输出 · 方向盘可随时切出", 960f, 398f, oemSubPaint)
         } else {
-            fakeUltraView.setArtwork(null)
-            fakeUltraView.setMusicInfo(null, false)
+            val showAlbum = config.centerMode == GeelyClusterCenterMode.ALBUM
+            val previewCarPlay = previewRouteActive ||
+                isPureMapPreview ||
+                config.centerMode == GeelyClusterCenterMode.MAP ||
+                showAlbum
+            fakeUltraView.carPlayConnected = previewCarPlay
+            fakeUltraView.carPlayMediaActive = showAlbum || previewRouteActive || isPureMapPreview
+            fakeUltraView.nightMode = previewNight
+            if (showAlbum || previewRouteActive || isPureMapPreview) {
+                fakeUltraView.setArtwork(demoPreviewArtwork)
+                fakeUltraView.setMusicInfo("千千阙歌 · 陈慧娴", true)
+            } else {
+                fakeUltraView.setArtwork(null)
+                fakeUltraView.setMusicInfo(null, false)
+            }
+            fakeUltraView.measure(
+                MeasureSpec.makeMeasureSpec(1920, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(720, MeasureSpec.EXACTLY),
+            )
+            fakeUltraView.layout(0, 0, 1920, 720)
+            fakeUltraView.draw(canvas)
         }
-        fakeUltraView.measure(
-            MeasureSpec.makeMeasureSpec(1920, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(720, MeasureSpec.EXACTLY),
-        )
-        fakeUltraView.layout(0, 0, 1920, 720)
-        fakeUltraView.draw(canvas)
 
         // 4. Render Self-Draw HUD, cluster card, fullscreen card & lane guidance in 1920x1080
+        val effectivePreviewFullScreen = previewRouteActive && !isOemPreview
         GeelySelfDrawRenderer.drawAll(
             canvas = canvas,
             config = config,
             guidance = null,
             lanes = emptyList(),
             nightMode = previewNight,
-            fullScreen = previewRouteActive,
+            fullScreen = effectivePreviewFullScreen,
             nowMs = SystemClock.uptimeMillis(),
             forcePreview = previewRouteActive,
         )
@@ -541,7 +636,7 @@ internal class GeelyCompositePreviewView(context: Context) : View(context) {
                 emphasized = highlightedArea == GeelyCalibrationArea.CLASSIC_CARD,
             )
         }
-        if (config.fullscreenCardEnabled && previewRouteActive) {
+        if (config.fullscreenCardEnabled && effectivePreviewFullScreen) {
             drawAreaOutline(
                 canvas = canvas,
                 area = config.fullscreenCardArea,
@@ -964,7 +1059,7 @@ internal class GeelyClusterSettingsPanel(
         titleCol.addView(createCardTitle("全境仪表主题风格"))
         titleCol.addView(
             TextView(activity).apply {
-                text = "${GeelyClusterThemeStyle.entries.size} 套矢量双圆盘风格 · 全部支持昼夜自适应，点击立即生效"
+                text = "原车经典 + 纯地图全屏 + 6 套机甲矢量双圆盘（共 ${GeelyClusterThemeStyle.entries.size} 套），点击立即切换"
                 setTextColor(colors.secondaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setPadding(0, dp(3), 0, 0)
@@ -1218,6 +1313,18 @@ internal class GeelyClusterSettingsPanel(
         val card = createSurfaceCard()
         card.addView(createCardTitle("仪表画面元素"), matchWrap(bottomMargin = dp(6)))
 
+        if (config.dialThemeStyle.isOemNative || config.dialThemeStyle.isPureMap) {
+            val modeNotice = if (config.dialThemeStyle.isOemNative) {
+                "当前为「原车经典」主题，左右圆盘、遮罩与底部音乐栏自动让位于原车界面；切回机甲或纯地图主题后自动生效。"
+            } else {
+                "当前为「纯地图全屏」主题，已自动隐藏左右圆盘与边缘遮罩，下方音乐栏与全屏导航卡按开关生效；切回机甲主题自动恢复以下开关。"
+            }
+            card.addView(
+                createHintText(modeNotice),
+                matchWrap(bottomMargin = dp(8)),
+            )
+        }
+
         addFlatSwitchRow(
             container = card,
             title = "左侧车速圆盘",
@@ -1454,19 +1561,26 @@ internal class GeelyClusterSettingsPanel(
                 heightDp = 38,
             ) { trigger ->
                 val adjustedTelemetryTrigger = if (config.sharesTelemetryKeyWithPrimary && config.telemetrySwitchTrigger == trigger) {
-                    val alt = when (trigger) {
-                        GeelyClusterSwitchTrigger.SINGLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
-                        GeelyClusterSwitchTrigger.LONG_PRESS -> GeelyClusterSwitchTrigger.DOUBLE_CLICK
-                        GeelyClusterSwitchTrigger.DOUBLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
-                    }
+                    val alt = GeelyClusterSwitchTrigger.resolveNonConflicting(
+                        config.telemetrySwitchTrigger,
+                        setOf(trigger),
+                    )
                     Toast.makeText(activity, "已自动将车况查看手势错开为「${alt.shortLabel}」", Toast.LENGTH_SHORT).show()
                     alt
                 } else {
                     config.telemetrySwitchTrigger
                 }
+                val adjustedThemeTrigger = if (config.sharesThemeKeyWithPrimary) {
+                    val used = linkedSetOf(trigger)
+                    if (config.sharesTelemetryKeyWithPrimary) used.add(adjustedTelemetryTrigger)
+                    GeelyClusterSwitchTrigger.resolveNonConflicting(config.themeSwitchTrigger, used)
+                } else {
+                    config.themeSwitchTrigger
+                }
                 config = config.copy(
                     centerSwitchTrigger = trigger,
                     telemetrySwitchTrigger = adjustedTelemetryTrigger,
+                    themeSwitchTrigger = adjustedThemeTrigger,
                 )
                 onConfigUpdated()
                 rebuildTabContent()
@@ -1629,19 +1743,26 @@ internal class GeelyClusterSettingsPanel(
                 heightDp = 38,
             ) { trigger ->
                 val adjustedPrimaryTrigger = if (config.sharesTelemetryKeyWithPrimary && config.centerSwitchTrigger == trigger) {
-                    val alt = when (trigger) {
-                        GeelyClusterSwitchTrigger.SINGLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
-                        GeelyClusterSwitchTrigger.LONG_PRESS -> GeelyClusterSwitchTrigger.SINGLE_CLICK
-                        GeelyClusterSwitchTrigger.DOUBLE_CLICK -> GeelyClusterSwitchTrigger.SINGLE_CLICK
-                    }
+                    val alt = GeelyClusterSwitchTrigger.resolveNonConflicting(
+                        config.centerSwitchTrigger,
+                        setOf(trigger),
+                    )
                     Toast.makeText(activity, "已自动将主视图切换手势错开为「${alt.shortLabel}」", Toast.LENGTH_SHORT).show()
                     alt
                 } else {
                     config.centerSwitchTrigger
                 }
+                val adjustedThemeTrigger = if (config.sharesThemeKeyWithTelemetry) {
+                    val used = linkedSetOf(trigger)
+                    if (config.sharesThemeKeyWithPrimary) used.add(adjustedPrimaryTrigger)
+                    GeelyClusterSwitchTrigger.resolveNonConflicting(config.themeSwitchTrigger, used)
+                } else {
+                    config.themeSwitchTrigger
+                }
                 config = config.copy(
                     centerSwitchTrigger = adjustedPrimaryTrigger,
                     telemetrySwitchTrigger = trigger,
+                    themeSwitchTrigger = adjustedThemeTrigger,
                 )
                 onConfigUpdated()
                 rebuildTabContent()
@@ -1709,7 +1830,204 @@ internal class GeelyClusterSettingsPanel(
         )
         card.addView(telemetryKeyBox, matchWrap(bottomMargin = dp(10)))
 
-        // Subcard 3: Steering-wheel Voice key -> Siri shortcut & override
+        // Subcard 3: Cluster theme cycle wheel key (OEM Classic / Pure Map / Mecha)
+        val themeKeyBox = createSubCard()
+        val learningTheme = learningTarget == EcarxKx11WheelKeys.ClusterLearnTarget.THEME
+        val themeHeader = LinearLayout(activity).apply {
+            orientation = if (isMediumScreen()) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val themeInfoCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        themeInfoCol.addView(
+            TextView(activity).apply {
+                text = "仪表主题切换键（原车 / 纯地图 / 机甲）"
+                setTextColor(colors.primaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            },
+        )
+        val themeBindLabel = when {
+            config.themeSwitchKeyCode <= 0 -> "未绑定（由用户自由学习任意车机实体键）"
+            config.sharesThemeKeyWithPrimary -> "共用主视图键：${formatGeelyWheelKey(config.themeSwitchKeyCode)}"
+            else -> "独立按键：${formatGeelyWheelKey(config.themeSwitchKeyCode)}"
+        }
+        themeInfoCol.addView(
+            TextView(activity).apply {
+                text = themeBindLabel
+                setTextColor(if (config.themeSwitchKeyCode > 0) colors.accent else colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setPadding(0, dp(3), 0, 0)
+            },
+        )
+        themeHeader.addView(
+            themeInfoCol,
+            if (isMediumScreen()) {
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(10) }
+            } else {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { bottomMargin = dp(8) }
+            },
+        )
+
+        val themeBtnRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        val themeLearnText = when {
+            learningTheme -> "请按下车机按键…"
+            config.themeSwitchKeyCode > 0 -> "重新学习"
+            else -> "学习按键"
+        }
+        val themeLearnBtn = if (learningTheme) {
+            createPrimaryButton(themeLearnText) {
+                cancelLearningState()
+                rebuildTabContent()
+            }
+        } else {
+            createActionButton(themeLearnText, selected = config.themeSwitchKeyCode > 0) {
+                startWheelKeyLearning(EcarxKx11WheelKeys.ClusterLearnTarget.THEME)
+            }
+        }
+        themeBtnRow.addView(
+            themeLearnBtn,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP)),
+        )
+        if (config.centerSwitchKeyCode > 0 && !config.sharesThemeKeyWithPrimary) {
+            val shareThemeBtn = createActionButton("共用主视图键") {
+                cancelLearningState()
+                val used = linkedSetOf(config.centerSwitchTrigger)
+                if (config.sharesTelemetryKeyWithPrimary) used.add(config.telemetrySwitchTrigger)
+                val nextTrig = GeelyClusterSwitchTrigger.resolveNonConflicting(config.themeSwitchTrigger, used)
+                config = config.copy(
+                    themeSwitchKeyCode = config.centerSwitchKeyCode,
+                    themeSwitchTrigger = nextTrig,
+                )
+                onConfigUpdated()
+                Toast.makeText(
+                    activity,
+                    "已与主视图共用 ${formatGeelyWheelKey(config.themeSwitchKeyCode)}（${nextTrig.shortLabel}切主题）",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                rebuildTabContent()
+            }
+            themeBtnRow.addView(
+                shareThemeBtn,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP))
+                    .apply { marginStart = dp(8) },
+            )
+        }
+        if (config.themeSwitchKeyCode > 0) {
+            val clearThemeBtn = createActionButton("清除") {
+                cancelLearningState()
+                config = config.copy(themeSwitchKeyCode = 0)
+                onConfigUpdated()
+                rebuildTabContent()
+            }
+            themeBtnRow.addView(
+                clearThemeBtn,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(GeelyUiDimens.COMPACT_BUTTON_HEIGHT_DP))
+                    .apply { marginStart = dp(8) },
+            )
+        }
+        themeHeader.addView(themeBtnRow)
+        themeKeyBox.addView(themeHeader, matchWrap(bottomMargin = dp(10)))
+
+        val themeTriggerRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        themeTriggerRow.addView(
+            TextView(activity).apply {
+                text = "触发手势"
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        themeTriggerRow.addView(
+            createSegmentedRow(
+                options = listOf(
+                    GeelyClusterSwitchTrigger.SINGLE_CLICK to "单击",
+                    GeelyClusterSwitchTrigger.LONG_PRESS to "长按",
+                    GeelyClusterSwitchTrigger.DOUBLE_CLICK to "双击",
+                ),
+                selected = config.themeSwitchTrigger,
+                heightDp = 38,
+            ) { trigger ->
+                var nextPrimaryTrig = config.centerSwitchTrigger
+                var nextTelTrig = config.telemetrySwitchTrigger
+                if (config.sharesThemeKeyWithPrimary && nextPrimaryTrig == trigger) {
+                    val used = linkedSetOf(trigger)
+                    if (config.sharesTelemetryKeyWithPrimary) used.add(nextTelTrig)
+                    nextPrimaryTrig = GeelyClusterSwitchTrigger.resolveNonConflicting(nextPrimaryTrig, used)
+                }
+                if (config.sharesThemeKeyWithTelemetry && nextTelTrig == trigger) {
+                    val used = linkedSetOf(trigger)
+                    if (config.sharesThemeKeyWithPrimary) used.add(nextPrimaryTrig)
+                    nextTelTrig = GeelyClusterSwitchTrigger.resolveNonConflicting(nextTelTrig, used)
+                }
+                config = config.copy(
+                    centerSwitchTrigger = nextPrimaryTrig,
+                    telemetrySwitchTrigger = nextTelTrig,
+                    themeSwitchTrigger = trigger,
+                )
+                onConfigUpdated()
+                rebuildTabContent()
+            },
+            LinearLayout.LayoutParams(dp(220), ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        themeKeyBox.addView(themeTriggerRow, matchWrap(bottomMargin = dp(10)))
+
+        themeKeyBox.addView(
+            TextView(activity).apply {
+                text = "按键循环包含的主题（默认：原车经典 + 纯地图全屏 + 机甲光翼）"
+                setTextColor(colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            },
+            matchWrap(bottomMargin = dp(6)),
+        )
+        val themeChipCols = if (isMediumScreen()) 4 else 2
+        val themeChipRows = GeelyClusterThemeStyle.entries.chunked(themeChipCols)
+        for ((rIdx, rowStyles) in themeChipRows.withIndex()) {
+            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+            for (cIdx in 0 until themeChipCols) {
+                val style = rowStyles.getOrNull(cIdx)
+                val lp = LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                    if (cIdx > 0) marginStart = dp(6)
+                }
+                if (style != null) {
+                    val enabled = style in config.themeCycleStyles
+                    val label = if (enabled) "✓ ${style.shortLabel}" else style.shortLabel
+                    val chip = createActionButton(label, selected = enabled) {
+                        val nextSet = LinkedHashSet(config.themeCycleStyles)
+                        if (enabled) {
+                            if (nextSet.size <= 2) {
+                                Toast.makeText(activity, "至少保留 2 套主题以便循环切换", Toast.LENGTH_SHORT).show()
+                                return@createActionButton
+                            }
+                            nextSet.remove(style)
+                        } else {
+                            nextSet.add(style)
+                        }
+                        config = config.copy(themeCycleStyles = nextSet)
+                        onConfigUpdated()
+                        rebuildTabContent()
+                    }
+                    row.addView(chip, lp)
+                } else {
+                    row.addView(View(activity), lp)
+                }
+            }
+            themeKeyBox.addView(
+                row,
+                matchWrap(bottomMargin = if (rIdx == themeChipRows.lastIndex) dp(8) else dp(6)),
+            )
+        }
+        themeKeyBox.addView(
+            createHintText(
+                "点击「学习按键」即可自动探测并绑定车机方向盘/中控可用实体键（推荐使用自定义键、MODE 键或静音键「长按」避免触发原车短按功能；也可共用微信键）。无地图投屏时，纯地图全屏自动回落原车且按键循环自动跳过。",
+            ),
+        )
+        card.addView(themeKeyBox, matchWrap(bottomMargin = dp(10)))
+
+        // Subcard 4: Steering-wheel Voice key -> Siri shortcut & override
         val voiceBox = createSubCard()
         val siriEnabled = WheelZoomSettings.siriKey(activity)
         val currentSiriKey = WheelZoomSettings.key(activity, WheelZoomSettings.Role.SIRI)
@@ -1833,6 +2151,8 @@ internal class GeelyClusterSettingsPanel(
                             "已绑定 $keyDisplay（与 Siri 共键，建议将 Siri 改绑原车语音键以避免冲突）"
                         target == EcarxKx11WheelKeys.ClusterLearnTarget.PRIMARY ->
                             "已绑定主视图切换键：$keyDisplay（${config.centerSwitchTrigger.displayName}切换）"
+                        target == EcarxKx11WheelKeys.ClusterLearnTarget.THEME ->
+                            "已绑定仪表主题切换键：$keyDisplay（${config.themeSwitchTrigger.displayName}切换主题）"
                         config.sharesTelemetryKeyWithPrimary ->
                             "车况查看已与主视图共用 $keyDisplay（${config.telemetrySwitchTrigger.displayName}触发）"
                         else ->
@@ -2121,8 +2441,8 @@ internal class GeelyClusterSettingsPanel(
         previewFrame.addView(pv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(248)))
         card.addView(previewFrame, matchWrap(bottomMargin = dp(12)))
 
-        // Quick 6-theme switcher chips (2 rows x 3 cols)
-        val styleRows = GeelyClusterThemeStyle.entries.chunked(3)
+        // Quick 8-theme switcher chips (2 rows x 4 cols)
+        val styleRows = GeelyClusterThemeStyle.entries.chunked(4)
         for ((rowIdx, rowStyles) in styleRows.withIndex()) {
             val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
             for ((colIdx, style) in rowStyles.withIndex()) {

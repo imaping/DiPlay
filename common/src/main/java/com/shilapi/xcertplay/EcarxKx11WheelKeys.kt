@@ -12,6 +12,8 @@ import android.util.Log
 import com.geely.lib.oneosapi.input.IInputListener
 import com.geely.lib.oneosapi.input.IInputManager
 import com.shilapi.xcertplay.airplay.CarPlayMediaButton
+import java.lang.reflect.Modifier
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -43,6 +45,7 @@ internal object EcarxKx11WheelKeys {
     internal enum class ClusterLearnTarget {
         PRIMARY,
         TELEMETRY,
+        THEME,
     }
 
     internal enum class VoiceInterceptStatus {
@@ -93,6 +96,64 @@ internal object EcarxKx11WheelKeys {
         KEY_SEEK_PREVIOUS,
     )
 
+    private val KEYCODE_CLASS_CANDIDATES = listOf(
+        "com.ecarx.xui.adaptapi.input.KeyCode",
+        "com.geely.lib.oneosapi.input.KeyCode",
+        "com.geely.lib.oneosapi.input.KeyCodeEvent",
+    )
+
+    private val EXCLUDED_DISCOVERED_KEY_TOKENS = listOf(
+        "VOL_UP",
+        "VOL_DOWN",
+        "VOLUME_UP",
+        "VOLUME_DOWN",
+        "POWER",
+        "SCREEN_OFF",
+        "BRIGHTNESS",
+        "SOS",
+        "ECALL",
+        "CRUISE",
+        "ACC",
+        "APA",
+        "LDW",
+        "LKA",
+        "DISTANCE",
+    )
+
+    private data class DiscoveredKeyCatalog(
+        val codes: IntArray,
+        val names: Map<Int, String>,
+    )
+
+    private val discoveredCatalog: DiscoveredKeyCatalog by lazy { buildDiscoveredKeyCatalog() }
+
+    private fun buildDiscoveredKeyCatalog(): DiscoveredKeyCatalog {
+        val codes = LinkedHashSet<Int>(LEARNABLE_CODES.size + 32)
+        for (c in LEARNABLE_CODES) codes.add(c)
+        val names = LinkedHashMap<Int, String>()
+        for (className in KEYCODE_CLASS_CANDIDATES) {
+            val cls = runCatching { Class.forName(className) }.getOrNull() ?: continue
+            for (field in cls.fields) {
+                val mods = field.modifiers
+                if (!Modifier.isStatic(mods) || !Modifier.isFinal(mods)) continue
+                if (field.type != Int::class.javaPrimitiveType) continue
+                val fieldName = field.name
+                if (!fieldName.startsWith("KEYCODE_")) continue
+                val upper = fieldName.uppercase(Locale.ROOT)
+                if (EXCLUDED_DISCOVERED_KEY_TOKENS.any { it in upper }) continue
+                val code = runCatching { field.getInt(null) }.getOrNull() ?: continue
+                if (code !in 100_000..999_999) continue
+                codes.add(code)
+                names.putIfAbsent(code, fieldName.removePrefix("KEYCODE_"))
+            }
+        }
+        return DiscoveredKeyCatalog(codes.toIntArray(), names)
+    }
+
+    internal fun discoveredKeyLabel(code: Int): String? = discoveredCatalog.names[code]
+
+    private fun learnableCodesForSession(): IntArray = discoveredCatalog.codes
+
     private class LearningSession(
         val role: WheelZoomSettings.Role,
         val cancelled: () -> Unit,
@@ -111,6 +172,9 @@ internal object EcarxKx11WheelKeys {
     private val siriDebounce = WheelSiriKey()
     private val clusterDoublePress = WheelSiriKey()
     private val telemetryDoublePress = WheelSiriKey()
+    private val themeDoublePress = WheelSiriKey()
+    private var lastDoubleFiredKeyCode: Int = 0
+    private var lastDoubleFiredElapsedMs: Long = 0L
 
     @Volatile
     private var appContext: Context? = null
@@ -243,6 +307,7 @@ internal object EcarxKx11WheelKeys {
             if (!active) {
                 clusterDoublePress.reset()
                 telemetryDoublePress.reset()
+                themeDoublePress.reset()
                 cancelPendingSingleClickLocked()
             }
             syncBindingLocked()
@@ -353,6 +418,7 @@ internal object EcarxKx11WheelKeys {
             val clusterCfg = GeelyClusterPrefs.load(context)
             if (clusterCfg.centerSwitchKeyCode > 0) codes.add(clusterCfg.centerSwitchKeyCode)
             if (clusterCfg.telemetrySwitchKeyCode > 0) codes.add(clusterCfg.telemetrySwitchKeyCode)
+            if (clusterCfg.themeSwitchKeyCode > 0) codes.add(clusterCfg.themeSwitchKeyCode)
         }
         return codes.toIntArray()
     }
@@ -415,7 +481,7 @@ internal object EcarxKx11WheelKeys {
     }
 
     private fun desiredCodesLocked(context: Context): IntArray = when {
-        learning != null || clusterLearning != null -> LEARNABLE_CODES
+        learning != null || clusterLearning != null -> learnableCodesForSession()
         sessionActive || clusterActive -> runtimeCodes(context)
         else -> IntArray(0)
     }
@@ -471,13 +537,24 @@ internal object EcarxKx11WheelKeys {
             runCatching { input.unregisterListener(old, context.packageName) }
         }
         val nextListener = createListener()
-        runCatching {
+        val isLearn = learning != null || clusterLearning != null
+        val registeredResult = runCatching {
             input.registerListener(nextListener, context.packageName, codes)
-        }.onSuccess {
+            codes
+        }.recoverCatching { firstError ->
+            if (isLearn && !codes.contentEquals(LEARNABLE_CODES)) {
+                note("KX11 expanded learn register failed (${firstError.javaClass.simpleName}); falling back to baseline codes")
+                input.registerListener(nextListener, context.packageName, LEARNABLE_CODES)
+                LEARNABLE_CODES
+            } else {
+                throw firstError
+            }
+        }
+        registeredResult.onSuccess { activeCodes ->
             listener = nextListener
-            registeredCodes = codes.copyOf()
-            val mode = if (learning != null || clusterLearning != null) "learn" else "runtime"
-            note("KX11 input service registered ($mode) codes=${codes.joinToString()}")
+            registeredCodes = activeCodes.copyOf()
+            val mode = if (isLearn) "learn" else "runtime"
+            note("KX11 input service registered ($mode) count=${activeCodes.size} codes=${activeCodes.joinToString()}")
             syncVoiceKeyInterceptLocked(input, context)
         }.onFailure { error ->
             listener = null
@@ -499,7 +576,7 @@ internal object EcarxKx11WheelKeys {
                 handleLearnKey(keyCode)
                 return
             }
-            handleRuntimeKey(keyCode, longPress = false)
+            handleRuntimeKey(keyCode, longPress = false, nativeDoubleClick = false)
         }
 
         override fun onHoldingPressStarted(keyCode: Int, softKeyFunction: Int) = Unit
@@ -511,10 +588,16 @@ internal object EcarxKx11WheelKeys {
                 handleLearnKey(keyCode)
                 return
             }
-            handleRuntimeKey(keyCode, longPress = true)
+            handleRuntimeKey(keyCode, longPress = true, nativeDoubleClick = false)
         }
 
-        override fun onDoubleClick(keyCode: Int, softKeyFunction: Int) = Unit
+        override fun onDoubleClick(keyCode: Int, softKeyFunction: Int) {
+            if (learning != null || clusterLearning != null) {
+                handleLearnKey(keyCode)
+                return
+            }
+            handleRuntimeKey(keyCode, longPress = false, nativeDoubleClick = true)
+        }
     }
 
     private fun handleLearnKey(keyCode: Int) {
@@ -540,41 +623,64 @@ internal object EcarxKx11WheelKeys {
                     ClusterLearnTarget.PRIMARY -> {
                         val sameAsTelemetry = current.telemetrySwitchKeyCode == keyCode
                         val nextTelemetryCode = if (sameAsTelemetry) 0 else current.telemetrySwitchKeyCode
-                        val nextTelemetryTrigger = if (nextTelemetryCode == 0 &&
-                            current.telemetrySwitchTrigger == current.centerSwitchTrigger
-                        ) {
-                            when (current.centerSwitchTrigger) {
-                                GeelyClusterSwitchTrigger.SINGLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
-                                GeelyClusterSwitchTrigger.LONG_PRESS -> GeelyClusterSwitchTrigger.DOUBLE_CLICK
-                                GeelyClusterSwitchTrigger.DOUBLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
-                            }
+                        val nextTelemetryTrigger = if (nextTelemetryCode == 0) {
+                            GeelyClusterSwitchTrigger.resolveNonConflicting(
+                                current.telemetrySwitchTrigger,
+                                setOf(current.centerSwitchTrigger),
+                            )
                         } else {
                             current.telemetrySwitchTrigger
+                        }
+                        val nextThemeTrigger = if (current.themeSwitchKeyCode == keyCode) {
+                            val used = linkedSetOf(current.centerSwitchTrigger)
+                            if (nextTelemetryCode == 0) used.add(nextTelemetryTrigger)
+                            GeelyClusterSwitchTrigger.resolveNonConflicting(current.themeSwitchTrigger, used)
+                        } else {
+                            current.themeSwitchTrigger
                         }
                         current.copy(
                             centerSwitchKeyCode = keyCode,
                             telemetrySwitchKeyCode = nextTelemetryCode,
                             telemetrySwitchTrigger = nextTelemetryTrigger,
+                            themeSwitchTrigger = nextThemeTrigger,
                         )
                     }
                     ClusterLearnTarget.TELEMETRY -> {
-                        if (keyCode == current.centerSwitchKeyCode) {
-                            val nextTelemetryTrigger = if (current.telemetrySwitchTrigger == current.centerSwitchTrigger) {
-                                when (current.centerSwitchTrigger) {
-                                    GeelyClusterSwitchTrigger.SINGLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
-                                    GeelyClusterSwitchTrigger.LONG_PRESS -> GeelyClusterSwitchTrigger.DOUBLE_CLICK
-                                    GeelyClusterSwitchTrigger.DOUBLE_CLICK -> GeelyClusterSwitchTrigger.LONG_PRESS
-                                }
-                            } else {
-                                current.telemetrySwitchTrigger
-                            }
-                            current.copy(
-                                telemetrySwitchKeyCode = 0,
-                                telemetrySwitchTrigger = nextTelemetryTrigger,
+                        val sharesPrimary = keyCode == current.centerSwitchKeyCode
+                        val nextTelemetryCode = if (sharesPrimary) 0 else keyCode
+                        val nextTelemetryTrigger = if (sharesPrimary) {
+                            GeelyClusterSwitchTrigger.resolveNonConflicting(
+                                current.telemetrySwitchTrigger,
+                                setOf(current.centerSwitchTrigger),
                             )
                         } else {
-                            current.copy(telemetrySwitchKeyCode = keyCode)
+                            current.telemetrySwitchTrigger
                         }
+                        val nextThemeTrigger = if (current.themeSwitchKeyCode == keyCode) {
+                            val used = linkedSetOf(nextTelemetryTrigger)
+                            if (sharesPrimary) used.add(current.centerSwitchTrigger)
+                            GeelyClusterSwitchTrigger.resolveNonConflicting(current.themeSwitchTrigger, used)
+                        } else {
+                            current.themeSwitchTrigger
+                        }
+                        current.copy(
+                            telemetrySwitchKeyCode = nextTelemetryCode,
+                            telemetrySwitchTrigger = nextTelemetryTrigger,
+                            themeSwitchTrigger = nextThemeTrigger,
+                        )
+                    }
+                    ClusterLearnTarget.THEME -> {
+                        val used = LinkedHashSet<GeelyClusterSwitchTrigger>()
+                        if (current.centerSwitchKeyCode == keyCode) used.add(current.centerSwitchTrigger)
+                        if (current.effectiveTelemetrySwitchKeyCode == keyCode) used.add(current.telemetrySwitchTrigger)
+                        val nextThemeTrigger = GeelyClusterSwitchTrigger.resolveNonConflicting(
+                            current.themeSwitchTrigger,
+                            used,
+                        )
+                        current.copy(
+                            themeSwitchKeyCode = keyCode,
+                            themeSwitchTrigger = nextThemeTrigger,
+                        )
                     }
                 }
                 GeelyClusterPrefs.save(context, updated)
@@ -609,7 +715,7 @@ internal object EcarxKx11WheelKeys {
         }
     }
 
-    private fun handleRuntimeKey(keyCode: Int, longPress: Boolean) {
+    private fun handleRuntimeKey(keyCode: Int, longPress: Boolean, nativeDoubleClick: Boolean) {
         val context: Context
         synchronized(this) {
             if (!sessionActive && !clusterActive) return
@@ -620,13 +726,21 @@ internal object EcarxKx11WheelKeys {
             }
             ignoreRuntimeKeyCode = null
         }
-        handler.post { dispatchRuntimeKeyOnMain(context, keyCode, longPress) }
+        handler.post { dispatchRuntimeKeyOnMain(context, keyCode, longPress, nativeDoubleClick) }
     }
 
-    private fun dispatchRuntimeKeyOnMain(context: Context, keyCode: Int, longPress: Boolean) {
-        if ((sessionActive || clusterActive) && dispatchClusterKeyOnMain(context, keyCode, longPress)) {
+    private fun dispatchRuntimeKeyOnMain(
+        context: Context,
+        keyCode: Int,
+        longPress: Boolean,
+        nativeDoubleClick: Boolean,
+    ) {
+        if ((sessionActive || clusterActive) &&
+            dispatchClusterKeyOnMain(context, keyCode, longPress, nativeDoubleClick)
+        ) {
             return
         }
+        if (nativeDoubleClick) return
 
         if (!sessionActive) return
         val wheelKey = toWheelKey(keyCode)
@@ -689,181 +803,167 @@ internal object EcarxKx11WheelKeys {
         }
     }
 
-    private fun dispatchClusterKeyOnMain(context: Context, keyCode: Int, longPress: Boolean): Boolean {
+    private enum class ClusterKeyRole(val logLabel: String) {
+        PRIMARY("primary view"),
+        TELEMETRY("telemetry"),
+        THEME("cluster theme"),
+    }
+
+    private fun executeClusterRole(
+        context: Context,
+        role: ClusterKeyRole,
+        closeTelemetryAfterLast: Boolean,
+    ): String = when (role) {
+        ClusterKeyRole.PRIMARY -> GeelyClusterEnhancer.cyclePrimaryCenterMode(context)
+        ClusterKeyRole.TELEMETRY -> GeelyClusterEnhancer.cycleTelemetryCenterMode(
+            context,
+            closeAfterLast = closeTelemetryAfterLast,
+        )
+        ClusterKeyRole.THEME -> GeelyClusterEnhancer.cycleThemeStyle(context)
+    }
+
+    private fun doublePressTrackerFor(role: ClusterKeyRole): WheelSiriKey = when (role) {
+        ClusterKeyRole.PRIMARY -> clusterDoublePress
+        ClusterKeyRole.TELEMETRY -> telemetryDoublePress
+        ClusterKeyRole.THEME -> themeDoublePress
+    }
+
+    private fun dispatchClusterKeyOnMain(
+        context: Context,
+        keyCode: Int,
+        longPress: Boolean,
+        nativeDoubleClick: Boolean,
+    ): Boolean {
         val cfg = GeelyClusterPrefs.load(context)
         val primaryKey = cfg.centerSwitchKeyCode
         val telemetryKey = cfg.effectiveTelemetrySwitchKeyCode
-        if (primaryKey <= 0 && telemetryKey <= 0) return false
+        val themeKey = cfg.themeSwitchKeyCode
+        if (primaryKey <= 0 && telemetryKey <= 0 && themeKey <= 0) return false
 
-        val sharedKey = cfg.sharesTelemetryKeyWithPrimary
-        if (sharedKey && keyCode == primaryKey) {
-            val pTrig = cfg.centerSwitchTrigger
-            val tTrig = cfg.telemetrySwitchTrigger
-            val inTelemetry = GeelyClusterEnhancer.isTelemetryPageActive(context)
+        // Never hijack call answer/hangup keys while a phone call is active.
+        if ((keyCode == KEY_CALL || keyCode == KEY_ENDCALL) && inCall(context)) return false
 
-            if (longPress) {
-                synchronized(this) { cancelPendingSingleClickLocked() }
-                return when {
-                    tTrig == GeelyClusterSwitchTrigger.LONG_PRESS -> {
-                        val result = GeelyClusterEnhancer.cycleTelemetryCenterMode(context, closeAfterLast = false)
-                        note("KX11 telemetry key $keyCode (long) -> $result")
-                        true
-                    }
-                    pTrig == GeelyClusterSwitchTrigger.LONG_PRESS -> {
-                        val result = GeelyClusterEnhancer.cyclePrimaryCenterMode(context)
-                        note("KX11 primary view key $keyCode (long) -> $result")
-                        true
-                    }
-                    else -> false
-                }
+        // In OEM Classic or Pure Map fallback (currently showing native OEM cluster),
+        // only the theme switch key responds so accidental presses never pull the driver out of OEM.
+        val showingOemFallback = cfg.dialThemeStyle.isOemNative ||
+            (cfg.dialThemeStyle.isPureMap && !GeelyClusterEnhancer.hasActiveMapSourceNow())
+
+        val bindings = ArrayList<Pair<ClusterKeyRole, GeelyClusterSwitchTrigger>>(3)
+        if (!showingOemFallback) {
+            if (primaryKey > 0 && keyCode == primaryKey) {
+                bindings.add(ClusterKeyRole.PRIMARY to cfg.centerSwitchTrigger)
             }
-
-            // Short click on shared key: while viewing telemetry, a single tap conveniently advances
-            // to the next telemetry page (and closes after the last one) with zero delay.
-            if (inTelemetry && (pTrig == GeelyClusterSwitchTrigger.SINGLE_CLICK || tTrig == GeelyClusterSwitchTrigger.SINGLE_CLICK)) {
-                synchronized(this) { cancelPendingSingleClickLocked() }
-                val result = GeelyClusterEnhancer.cycleTelemetryCenterMode(context, closeAfterLast = true)
-                note("KX11 telemetry next key $keyCode (short) -> $result")
-                return true
+            if (telemetryKey > 0 && keyCode == telemetryKey) {
+                bindings.add(ClusterKeyRole.TELEMETRY to cfg.telemetrySwitchTrigger)
             }
+        }
+        if (themeKey > 0 && keyCode == themeKey) {
+            bindings.add(ClusterKeyRole.THEME to cfg.themeSwitchTrigger)
+        }
+        if (bindings.isEmpty()) return false
 
-            val hasSingle = pTrig == GeelyClusterSwitchTrigger.SINGLE_CLICK || tTrig == GeelyClusterSwitchTrigger.SINGLE_CLICK
-            val hasDouble = pTrig == GeelyClusterSwitchTrigger.DOUBLE_CLICK || tTrig == GeelyClusterSwitchTrigger.DOUBLE_CLICK
+        val singleRole = bindings.firstOrNull { it.second == GeelyClusterSwitchTrigger.SINGLE_CLICK }?.first
+        val longRole = bindings.firstOrNull { it.second == GeelyClusterSwitchTrigger.LONG_PRESS }?.first
+        val doubleRole = bindings.firstOrNull { it.second == GeelyClusterSwitchTrigger.DOUBLE_CLICK }?.first
+        val inTelemetry = !showingOemFallback && GeelyClusterEnhancer.isTelemetryPageActive(context)
 
-            if (hasSingle && hasDouble) {
-                val secondTapConfirmed = synchronized(this) {
-                    if (pendingSingleClickRunnable != null && pendingSingleClickKeyCode == keyCode) {
-                        cancelPendingSingleClickLocked()
-                        true
-                    } else {
-                        cancelPendingSingleClickLocked()
-                        val appCtx = context.applicationContext
-                        val runnable = Runnable {
-                            synchronized(this@EcarxKx11WheelKeys) {
-                                pendingSingleClickRunnable = null
-                                pendingSingleClickKeyCode = 0
-                            }
-                            val res = if (pTrig == GeelyClusterSwitchTrigger.SINGLE_CLICK) {
-                                GeelyClusterEnhancer.cyclePrimaryCenterMode(appCtx)
-                            } else {
-                                GeelyClusterEnhancer.cycleTelemetryCenterMode(appCtx, closeAfterLast = true)
-                            }
-                            note("KX11 cluster key $keyCode (single-delayed) -> $res")
-                        }
-                        pendingSingleClickRunnable = runnable
-                        pendingSingleClickKeyCode = keyCode
-                        handler.postDelayed(runnable, SINGLE_VS_DOUBLE_SPLIT_MS)
-                        false
-                    }
+        if (longPress) {
+            synchronized(this) { cancelPendingSingleClickLocked() }
+            val role = longRole ?: return false
+            val res = executeClusterRole(context, role, closeTelemetryAfterLast = false)
+            note("KX11 ${role.logLabel} key $keyCode (long) -> $res")
+            return true
+        }
+
+        if (nativeDoubleClick) {
+            val role = doubleRole ?: return false
+            val now = SystemClock.elapsedRealtime()
+            val alreadyHandled = synchronized(this) {
+                cancelPendingSingleClickLocked()
+                val dup = lastDoubleFiredKeyCode == keyCode && (now - lastDoubleFiredElapsedMs) < 280L
+                if (!dup) {
+                    lastDoubleFiredKeyCode = keyCode
+                    lastDoubleFiredElapsedMs = now
                 }
-                if (secondTapConfirmed) {
-                    val res = if (tTrig == GeelyClusterSwitchTrigger.DOUBLE_CLICK) {
-                        GeelyClusterEnhancer.cycleTelemetryCenterMode(context, closeAfterLast = false)
-                    } else {
-                        GeelyClusterEnhancer.cyclePrimaryCenterMode(context)
-                    }
-                    note("KX11 cluster key $keyCode (double) -> $res")
-                }
-                return true
+                dup
             }
+            if (alreadyHandled) return true
+            val res = executeClusterRole(context, role, closeTelemetryAfterLast = false)
+            note("KX11 ${role.logLabel} key $keyCode (native-double) -> $res")
+            return true
+        }
 
-            if (hasSingle) {
-                val res = if (pTrig == GeelyClusterSwitchTrigger.SINGLE_CLICK) {
-                    GeelyClusterEnhancer.cyclePrimaryCenterMode(context)
+        // Short click while viewing telemetry: if this key drives primary or telemetry via single-click
+        // and does not share double-click on the same key, advance telemetry immediately with zero delay.
+        if (inTelemetry && doubleRole == null &&
+            (singleRole == ClusterKeyRole.PRIMARY || singleRole == ClusterKeyRole.TELEMETRY)
+        ) {
+            synchronized(this) { cancelPendingSingleClickLocked() }
+            val res = GeelyClusterEnhancer.cycleTelemetryCenterMode(context, closeAfterLast = true)
+            note("KX11 telemetry next key $keyCode (short) -> $res")
+            return true
+        }
+
+        if (singleRole != null && doubleRole != null) {
+            val secondTapConfirmed = synchronized(this) {
+                if (pendingSingleClickRunnable != null && pendingSingleClickKeyCode == keyCode) {
+                    cancelPendingSingleClickLocked()
+                    lastDoubleFiredKeyCode = keyCode
+                    lastDoubleFiredElapsedMs = SystemClock.elapsedRealtime()
+                    true
                 } else {
-                    GeelyClusterEnhancer.cycleTelemetryCenterMode(context, closeAfterLast = true)
-                }
-                note("KX11 cluster key $keyCode (short) -> $res")
-                return true
-            }
-
-            if (hasDouble) {
-                val now = SystemClock.elapsedRealtime()
-                val action = synchronized(this) {
-                    clusterDoublePress.onDoublePress(now, CLUSTER_DOUBLE_CLICK_INTERVAL_MS)
-                }
-                if (action == WheelSiriKey.DoublePressAction.CONFIRMED) {
-                    val res = if (tTrig == GeelyClusterSwitchTrigger.DOUBLE_CLICK) {
-                        GeelyClusterEnhancer.cycleTelemetryCenterMode(context, closeAfterLast = false)
-                    } else {
-                        GeelyClusterEnhancer.cyclePrimaryCenterMode(context)
+                    cancelPendingSingleClickLocked()
+                    val appCtx = context.applicationContext
+                    val runnable = Runnable {
+                        synchronized(this@EcarxKx11WheelKeys) {
+                            pendingSingleClickRunnable = null
+                            pendingSingleClickKeyCode = 0
+                        }
+                        val res = if (GeelyClusterEnhancer.isTelemetryPageActive(appCtx) &&
+                            (singleRole == ClusterKeyRole.PRIMARY || singleRole == ClusterKeyRole.TELEMETRY)
+                        ) {
+                            GeelyClusterEnhancer.cycleTelemetryCenterMode(appCtx, closeAfterLast = true)
+                        } else {
+                            executeClusterRole(appCtx, singleRole, closeTelemetryAfterLast = true)
+                        }
+                        note("KX11 ${singleRole.logLabel} key $keyCode (single-delayed) -> $res")
                     }
-                    note("KX11 cluster key $keyCode (double) -> $res")
-                    return true
+                    pendingSingleClickRunnable = runnable
+                    pendingSingleClickKeyCode = keyCode
+                    handler.postDelayed(runnable, SINGLE_VS_DOUBLE_SPLIT_MS)
+                    false
                 }
             }
-            return false
+            if (secondTapConfirmed) {
+                val res = executeClusterRole(context, doubleRole, closeTelemetryAfterLast = false)
+                note("KX11 ${doubleRole.logLabel} key $keyCode (double) -> $res")
+            }
+            return true
         }
 
-        // Separate keys mode
-        if (primaryKey > 0 && keyCode == primaryKey) {
-            return dispatchSingleRoleKey(
-                keyCode = keyCode,
-                longPress = longPress,
-                trigger = cfg.centerSwitchTrigger,
-                doublePressTracker = clusterDoublePress,
-                roleLabel = "primary view",
-            ) {
-                GeelyClusterEnhancer.cyclePrimaryCenterMode(context)
-            }
+        if (singleRole != null) {
+            val res = executeClusterRole(context, singleRole, closeTelemetryAfterLast = true)
+            note("KX11 ${singleRole.logLabel} key $keyCode (short) -> $res")
+            return true
         }
-        if (telemetryKey > 0 && keyCode == telemetryKey) {
-            return dispatchSingleRoleKey(
-                keyCode = keyCode,
-                longPress = longPress,
-                trigger = cfg.telemetrySwitchTrigger,
-                doublePressTracker = telemetryDoublePress,
-                roleLabel = "telemetry",
-            ) {
-                GeelyClusterEnhancer.cycleTelemetryCenterMode(context, closeAfterLast = true)
+
+        if (doubleRole != null) {
+            val now = SystemClock.elapsedRealtime()
+            val tracker = doublePressTrackerFor(doubleRole)
+            val action = synchronized(this) {
+                tracker.onDoublePress(now, CLUSTER_DOUBLE_CLICK_INTERVAL_MS)
+            }
+            if (action == WheelSiriKey.DoublePressAction.CONFIRMED) {
+                synchronized(this) {
+                    lastDoubleFiredKeyCode = keyCode
+                    lastDoubleFiredElapsedMs = now
+                }
+                val res = executeClusterRole(context, doubleRole, closeTelemetryAfterLast = false)
+                note("KX11 ${doubleRole.logLabel} key $keyCode (double) -> $res")
+                return true
             }
         }
         return false
-    }
-
-    private fun dispatchSingleRoleKey(
-        keyCode: Int,
-        longPress: Boolean,
-        trigger: GeelyClusterSwitchTrigger,
-        doublePressTracker: WheelSiriKey,
-        roleLabel: String,
-        action: () -> String,
-    ): Boolean = when (trigger) {
-        GeelyClusterSwitchTrigger.SINGLE_CLICK -> {
-            if (!longPress) {
-                val result = action()
-                note("KX11 $roleLabel key $keyCode (short) -> $result")
-                true
-            } else {
-                false
-            }
-        }
-        GeelyClusterSwitchTrigger.LONG_PRESS -> {
-            if (longPress) {
-                val result = action()
-                note("KX11 $roleLabel key $keyCode (long) -> $result")
-                true
-            } else {
-                false
-            }
-        }
-        GeelyClusterSwitchTrigger.DOUBLE_CLICK -> {
-            if (!longPress) {
-                val now = SystemClock.elapsedRealtime()
-                val res = synchronized(this) {
-                    doublePressTracker.onDoublePress(now, CLUSTER_DOUBLE_CLICK_INTERVAL_MS)
-                }
-                if (res == WheelSiriKey.DoublePressAction.CONFIRMED) {
-                    val result = action()
-                    note("KX11 $roleLabel key $keyCode (double) -> $result")
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        }
     }
 
     private fun clearDoubleSiriLocked() {
@@ -873,6 +973,9 @@ internal object EcarxKx11WheelKeys {
         siriDebounce.reset()
         clusterDoublePress.reset()
         telemetryDoublePress.reset()
+        themeDoublePress.reset()
+        lastDoubleFiredKeyCode = 0
+        lastDoubleFiredElapsedMs = 0L
     }
 
     private fun cancelPendingSingleClickLocked() {

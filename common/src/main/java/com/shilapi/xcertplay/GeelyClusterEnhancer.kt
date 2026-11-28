@@ -61,21 +61,28 @@ internal object GeelyClusterEnhancer {
     private var isFullScreenPresentationActive: Boolean = false
     private var presentationNightMode: Boolean? = null
     private var wasInPhoneCall: Boolean = false
+    private var lastAppliedThemeStyle: GeelyClusterThemeStyle? = null
+    private var lastRenderedOnCluster: Boolean = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bootRetry = GeelyClusterBootRetryController(mainHandler)
     private val callRecoveryTick = object : Runnable {
         override fun run() {
-            if (!isFullScreenPresentationActive) {
+            val app = hostAppContext
+            val cfg = app?.let(GeelyClusterPrefs::load)
+            if (!isFullScreenPresentationActive || cfg?.dialThemeStyle?.isOemNative == true) {
                 wasInPhoneCall = false
                 return
             }
-            val app = hostAppContext
             val inCall = isPhoneCallActive(app)
             if (wasInPhoneCall && !inCall) {
                 wasInPhoneCall = false
                 hostLogger("GeelyDimMenu: phone call ended; restoring full-screen cluster map")
                 mainHandler.postDelayed({
-                    if (isFullScreenPresentationActive && !isPhoneCallActive(hostAppContext)) {
+                    val curCfg = hostAppContext?.let(GeelyClusterPrefs::load)
+                    if (isFullScreenPresentationActive &&
+                        curCfg?.dialThemeStyle?.isOemNative != true &&
+                        !isPhoneCallActive(hostAppContext)
+                    ) {
                         activeDimController?.forceReenterFullScreenMap("post-call")
                     }
                 }, 900L)
@@ -84,6 +91,18 @@ internal object GeelyClusterEnhancer {
             }
             mainHandler.postDelayed(this, 1000L)
         }
+    }
+
+    fun hasActiveMapSourceNow(): Boolean =
+        isFullScreenPresentationActive || nativeMapProjected || GeelyNativeClusterMapObserver.isNativeMapProjected()
+
+    private fun shouldRenderThemeOnCluster(
+        cfg: GeelySelfDrawConfig,
+        assumeCarPlayActive: Boolean = false,
+    ): Boolean = when {
+        cfg.dialThemeStyle.isOemNative -> false
+        cfg.dialThemeStyle.isPureMap -> assumeCarPlayActive || hasActiveMapSourceNow()
+        else -> cfg.hasAnyClusterVisual
     }
 
     private var modeBeforeTelemetryPeek: GeelyClusterCenterMode? = null
@@ -316,6 +335,13 @@ internal object GeelyClusterEnhancer {
     private fun applyNativeMapState() {
         val activeNative = !isFullScreenPresentationActive && nativeMapProjected
         currentFakeUltraView?.nativeMapProjected = activeNative
+        val app = hostAppContext ?: return
+        if (!isFullScreenPresentationActive) {
+            val cfg = GeelyClusterPrefs.load(app)
+            if (cfg.dialThemeStyle.isPureMap) {
+                syncPersistentThemeWindow(app, requestFullScreen = activeNative)
+            }
+        }
     }
 
     private fun ensureHostNightObserver() {
@@ -398,6 +424,8 @@ internal object GeelyClusterEnhancer {
         val dialsOn = cfg.dialLeftEnabled || cfg.dialRightEnabled
         val hudOn = cfg.hasAnySelfDrawOverlay
         val status = when {
+            cfg.dialThemeStyle.isOemNative -> cfg.dialThemeStyle.shortLabel
+            cfg.dialThemeStyle.isPureMap -> cfg.dialThemeStyle.shortLabel
             dialsOn -> cfg.dialThemeStyle.shortLabel
             hudOn -> "仅抬头显示与导航卡"
             else -> "已关闭"
@@ -440,11 +468,20 @@ internal object GeelyClusterEnhancer {
         latestLanes = emptyList()
         currentFakeUltraView?.clearCarPlayData()
         closeStandaloneOverlayWindow()
-        val keepThemeAlive = isPersistentThemeActive() &&
-            (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
-        if (keepThemeAlive) {
-            applyVehicleMediaIfStandby()
-            hostAppContext?.let(::ensureNativeMapObserver)
+        val app = hostAppContext
+        val cfg = app?.let(GeelyClusterPrefs::load)
+        val keepThemeAlive = cfg?.hasClusterThemeCapability == true
+        if (keepThemeAlive && app != null) {
+            if (cfg.dialThemeStyle.usesDialChrome) {
+                applyVehicleMediaIfStandby()
+                ensureNativeMapObserver(app)
+            } else if (cfg.dialThemeStyle.isPureMap) {
+                stopVehicleMediaObserver()
+                ensureNativeMapObserver(app)
+            } else {
+                stopVehicleMediaObserver()
+                stopNativeMapObserver()
+            }
         } else {
             stopVehicleMediaObserver()
             stopNativeMapObserver()
@@ -452,8 +489,8 @@ internal object GeelyClusterEnhancer {
             hostNightObserverRemoval = null
             vehicleDayNightRemoval?.invoke()
             vehicleDayNightRemoval = null
-            hostAppContext?.let { app ->
-                runCatching { GeelyClusterPrefs.prefs(app).unregisterOnSharedPreferenceChangeListener(prefsListener) }
+            app?.let {
+                runCatching { GeelyClusterPrefs.prefs(it).unregisterOnSharedPreferenceChangeListener(prefsListener) }
             }
         }
     }
@@ -496,14 +533,25 @@ internal object GeelyClusterEnhancer {
         GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
         ensureVehicleDayNightObserver(app)
-        ensureVehicleMediaObserver(app)
+        val initialCfg = GeelyClusterPrefs.load(app)
+        if (initialCfg.dialThemeStyle.usesDialChrome) {
+            ensureVehicleMediaObserver(app)
+        }
         runOnMain {
+            val cfgNow = GeelyClusterPrefs.load(app)
+            if (cfgNow.dialThemeStyle.isOemNative || cfgNow.dialThemeStyle.isPureMap) {
+                // OEM Classic and Pure Map without an active map source stay cleanly on native
+                // QNX classic cluster while keeping wheel-key & native-map observers alive.
+                syncPersistentThemeWindow(app, requestFullScreen = false)
+                return@runOnMain
+            }
             bootRetry.start(
                 context = app,
                 shouldContinue = {
                     val cfg = GeelyClusterPrefs.load(app)
                     GeelyVehicleDetector.isGeelyOrEcarx(app) &&
                         cfg.launchThemeOnStart &&
+                        cfg.dialThemeStyle.usesDialChrome &&
                         cfg.hasAnyClusterVisual &&
                         !isFullScreenPresentationActive
                 },
@@ -653,6 +701,8 @@ internal object GeelyClusterEnhancer {
         }
         isFullScreenPresentationActive = presentationShowing
 
+        val cfg = GeelyClusterPrefs.load(context)
+        val effectiveFullScreen = presentationShowing && !cfg.dialThemeStyle.isOemNative
         val routeActive = guidance != null
         currentFakeUltraView?.apply {
             carPlayConnected = presentationShowing
@@ -662,7 +712,7 @@ internal object GeelyClusterEnhancer {
         syncStandaloneOverlayWindow(context.applicationContext)
 
         overlayWindow?.view?.let { v ->
-            v.fullScreen = presentationShowing
+            v.fullScreen = effectiveFullScreen
             v.guidance = guidance
             v.lanes = latestLanes
             v.invalidate()
@@ -670,7 +720,7 @@ internal object GeelyClusterEnhancer {
 
         activePresentationSelfDrawView?.let { v ->
             v.visibility = if (overlayWindow?.attached == true) View.INVISIBLE else View.VISIBLE
-            v.fullScreen = presentationShowing
+            v.fullScreen = effectiveFullScreen
             v.guidance = guidance
             v.lanes = latestLanes
             v.invalidate()
@@ -731,11 +781,16 @@ internal object GeelyClusterEnhancer {
         currentRoot.clipChildren = true
         currentRoot.clipToPadding = true
 
-        if (config.launchThemeOnStart) {
-            syncPersistentThemeWindow(context.applicationContext, requestFullScreen = false)
+        val oemNative = config.dialThemeStyle.isOemNative
+        if (!oemNative && config.launchThemeOnStart) {
+            syncPersistentThemeWindow(
+                appContext = context.applicationContext,
+                requestFullScreen = false,
+                assumeCarPlayActive = true,
+            )
         }
 
-        val fakeUltraView: GeelyFakeUltraOverlayView? = if (isPersistentThemeActive()) {
+        val fakeUltraView: GeelyFakeUltraOverlayView? = if (!oemNative && isPersistentThemeActive()) {
             // Reuse the persistent 2038 theme overlay directly to avoid duplicate dial rendering.
             persistentThemeWindow?.view?.apply {
                 this.config = config
@@ -751,6 +806,7 @@ internal object GeelyClusterEnhancer {
                 this.nightMode = effectiveNight
                 this.carPlayConnected = true
                 this.routeActive = latestGuidance != null
+                this.visibility = if (oemNative) View.GONE else View.VISIBLE
             }.also { v ->
                 currentRoot.addView(
                     v,
@@ -767,7 +823,7 @@ internal object GeelyClusterEnhancer {
         val selfDrawView = GeelySelfDrawCanvasView(context).apply {
             this.config = config
             this.nightMode = effectiveNight
-            this.fullScreen = true
+            this.fullScreen = !oemNative
             this.guidance = latestGuidance
             this.lanes = latestLanes
             this.visibility = if (overlayWindow?.attached == true) View.INVISIBLE else View.VISIBLE
@@ -795,14 +851,19 @@ internal object GeelyClusterEnhancer {
 
     private fun syncStockClusterViewsVisibility(root: FrameLayout?, config: GeelySelfDrawConfig) {
         val container = root ?: return
-        val hideDials = config.dialLeftEnabled || config.dialRightEnabled || config.albumArtEnabled
+        val hideDials = config.dialThemeStyle.isPureMap ||
+            config.dialThemeStyle.isOemNative ||
+            config.dialLeftEnabled ||
+            config.dialRightEnabled ||
+            config.albumArtEnabled
+        val hideTurnCard = config.fullscreenCardEnabled || config.dialThemeStyle.isOemNative
         for (i in 0 until container.childCount) {
             when (val child = container.getChildAt(i)) {
                 is ClusterSpeedometerView, is ClusterMusicView -> {
                     child.alpha = if (hideDials) 0f else 1f
                 }
                 is ClusterTurnCardView -> {
-                    child.alpha = if (config.fullscreenCardEnabled) 0f else 1f
+                    child.alpha = if (hideTurnCard) 0f else 1f
                 }
             }
         }
@@ -815,12 +876,19 @@ internal object GeelyClusterEnhancer {
         ) {
             return
         }
+        val app = context.applicationContext
+        val cfg = GeelyClusterPrefs.load(app)
         isFullScreenPresentationActive = true
         bootRetry.cancel()
         stopNativeMapObserver()
-        GeelyClusterPrefs.prefs(context).registerOnSharedPreferenceChangeListener(prefsListener)
+        GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
         ensureHostNightObserver()
-        ensureVehicleDayNightObserver(context)
+        ensureVehicleDayNightObserver(app)
+
+        if (!cfg.dialThemeStyle.isOemNative && cfg.launchThemeOnStart) {
+            syncPersistentThemeWindow(app, requestFullScreen = false, assumeCarPlayActive = true)
+        }
+
         currentFakeUltraView?.apply {
             carPlayConnected = true
             externalMediaActive = false
@@ -831,8 +899,28 @@ internal object GeelyClusterEnhancer {
         stopCarPlayMusicSubscription()
         ensureCarPlayMusicSubscription()
 
-        val controller = ensureDimController(context)
+        val controller = ensureDimController(app)
+        if (cfg.dialThemeStyle.isOemNative) {
+            // Respect OEM Classic theme: keep native QNX cluster active while retaining W-HUD & classic card.
+            closePersistentThemeWindow()
+            activeFakeUltraView?.visibility = View.GONE
+            lastAppliedThemeStyle = cfg.dialThemeStyle
+            lastRenderedOnCluster = false
+            activeDimWatcher?.close()
+            activeDimWatcher = null
+            mainHandler.removeCallbacks(callRecoveryTick)
+            wasInPhoneCall = false
+            if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(false, app)
+            syncStandaloneOverlayWindow(app)
+            overlayWindow?.view?.fullScreen = false
+            activePresentationSelfDrawView?.fullScreen = false
+            syncClusterWheelKeyActive(app)
+            return
+        }
+
         controller.forceReenterFullScreenMap("presentation-start")
+        lastAppliedThemeStyle = cfg.dialThemeStyle
+        lastRenderedOnCluster = true
 
         activeDimWatcher?.close()
         activeDimWatcher = GeelyDimLogcatWatcher(controller) {
@@ -848,10 +936,10 @@ internal object GeelyClusterEnhancer {
         mainHandler.removeCallbacks(callRecoveryTick)
         mainHandler.postDelayed(callRecoveryTick, 1000L)
 
-        syncStandaloneOverlayWindow(context.applicationContext)
+        syncStandaloneOverlayWindow(app)
         overlayWindow?.view?.fullScreen = true
         activePresentationSelfDrawView?.fullScreen = true
-        syncClusterWheelKeyActive(context.applicationContext)
+        syncClusterWheelKeyActive(app)
     }
 
     /** Called in `ClusterMapPresentation.onStop()`. */
@@ -864,8 +952,10 @@ internal object GeelyClusterEnhancer {
         activeDimWatcher?.close()
         activeDimWatcher = null
 
+        val app = hostAppContext
+        val cfg = app?.let(GeelyClusterPrefs::load)
         val keepBackgroundGuidance = CarPlayBackgroundSession.hasSession() &&
-            GeelyVehicleDetector.isGeelyOrEcarx(hostAppContext)
+            GeelyVehicleDetector.isGeelyOrEcarx(app)
         val keepCarPlaySession = carPlayHostAttached || keepBackgroundGuidance
         if (!keepBackgroundGuidance) {
             latestGuidance = null
@@ -876,19 +966,13 @@ internal object GeelyClusterEnhancer {
         activePresentationSelfDrawView = null
         activePresentationInnerRoot = null
 
-        val keepThemeAlive = isPersistentThemeActive() &&
-            (hostAppContext?.let { GeelyClusterPrefs.load(it).launchThemeOnStart } == true)
+        val keepMechaWindowAlive = isPersistentThemeActive() &&
+            cfg?.launchThemeOnStart == true &&
+            cfg.dialThemeStyle.usesDialChrome
 
         if (!keepCarPlaySession) {
             stopCarPlayMusicSubscription()
             currentFakeUltraView?.clearCarPlayData()
-            if (keepThemeAlive) {
-                applyVehicleMediaIfStandby()
-                hostAppContext?.let(::ensureNativeMapObserver)
-            } else {
-                stopNativeMapObserver()
-                activeDimController?.restoreClassicCluster()
-            }
         } else {
             currentFakeUltraView?.apply {
                 carPlayConnected = false
@@ -899,14 +983,44 @@ internal object GeelyClusterEnhancer {
                 }
                 invalidate()
             }
-            if (!keepThemeAlive) {
-                stopNativeMapObserver()
-                activeDimController?.restoreClassicCluster()
-            } else {
-                hostAppContext?.let(::ensureNativeMapObserver)
-                if (!carPlayTrackActive) {
+        }
+
+        when {
+            keepMechaWindowAlive && app != null -> {
+                ensureNativeMapObserver(app)
+                if (!keepCarPlaySession || !carPlayTrackActive) {
                     applyVehicleMediaIfStandby()
                 }
+            }
+            cfg?.dialThemeStyle?.isPureMap == true && app != null -> {
+                // Pure Map automatically falls back to OEM Classic when CarPlay disconnects
+                // and no native head-unit map is projected, while keeping standby observers alive.
+                closePersistentThemeWindow()
+                lastRenderedOnCluster = false
+                stopVehicleMediaObserver()
+                if (cfg.hasClusterThemeCapability) {
+                    ensureNativeMapObserver(app)
+                    GeelyClusterKeepAliveService.start(app)
+                } else {
+                    stopNativeMapObserver()
+                }
+                activeDimController?.restoreClassicCluster()
+                if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(false, app)
+            }
+            cfg?.dialThemeStyle?.isOemNative == true && app != null -> {
+                closePersistentThemeWindow()
+                lastRenderedOnCluster = false
+                stopNativeMapObserver()
+                stopVehicleMediaObserver()
+                if (cfg.hasClusterThemeCapability) {
+                    GeelyClusterKeepAliveService.start(app)
+                }
+            }
+            else -> {
+                lastRenderedOnCluster = false
+                stopNativeMapObserver()
+                activeDimController?.restoreClassicCluster()
+                if (app != null && GeelyClusterDisplay.supported()) GeelyClusterProjection.set(false, app)
             }
         }
 
@@ -918,7 +1032,7 @@ internal object GeelyClusterEnhancer {
             }
             invalidate()
         }
-        hostAppContext?.let(::syncClusterWheelKeyActive)
+        app?.let(::syncClusterWheelKeyActive)
     }
 
     /**
@@ -1042,6 +1156,56 @@ internal object GeelyClusterEnhancer {
     fun cycleCenterMode(context: Context): String = cyclePrimaryCenterMode(context)
 
     /**
+     * Cycles the active cluster theme across [GeelySelfDrawConfig.themeCycleStyles]
+     * (e.g. `OEM_CLASSIC` -> `PURE_MAP` -> `AERO_MECHA`).
+     *
+     * When no map source is active (`CarPlay` disconnected and no native map projection), `PURE_MAP`
+     * automatically falls back to OEM classic visually, so wheel-key cycling skips `PURE_MAP` when
+     * other themes are enabled to guarantee every press yields an immediate visible change.
+     */
+    fun cycleThemeStyle(context: Context): String {
+        val app = context.applicationContext
+        hostAppContext = app
+        val cfg = GeelyClusterPrefs.load(app)
+        val hasMapSource = hasActiveMapSourceNow()
+
+        val orderedEnabled = GeelyClusterThemeStyle.entries
+            .filter { it in cfg.themeCycleStyles }
+            .ifEmpty { GeelyClusterThemeStyle.entries.filter { it in GeelyClusterThemeStyle.DEFAULT_CYCLE_STYLES } }
+
+        val candidates = if (!hasMapSource) {
+            val filtered = orderedEnabled.filterNot { it.isPureMap }
+            if (filtered.isNotEmpty()) filtered else orderedEnabled
+        } else {
+            orderedEnabled
+        }
+
+        val currentIdx = candidates.indexOf(cfg.dialThemeStyle)
+        val nextStyle = if (currentIdx >= 0) {
+            candidates[(currentIdx + 1) % candidates.size]
+        } else {
+            candidates.first()
+        }
+
+        cancelNavAutoReturn()
+        val nextCenterMode = if (cfg.centerMode.isTelemetryPage) {
+            resolveFallbackPrimaryMode(cfg)
+        } else {
+            cfg.centerMode
+        }
+        val updated = cfg.copy(
+            dialThemeStyle = nextStyle,
+            centerMode = nextCenterMode,
+        )
+        GeelyClusterPrefs.save(app, updated)
+        refreshConfig(app)
+        if (!isFullScreenPresentationActive && nextStyle.isPureMap) {
+            GeelyNativeClusterMapObserver.refreshNow()
+        }
+        return nextStyle.name
+    }
+
+    /**
      * Ensures the cluster theme overlay is attached and the instrument panel is in full-screen
      * projection mode (`Mode 3`) when the driver presses a cluster view-switch wheel key.
      *
@@ -1054,7 +1218,13 @@ internal object GeelyClusterEnhancer {
      * or `null` when the theme is already visible and the caller should proceed with page cycling.
      */
     private fun ensureClusterThemeVisibleForWheelKey(app: Context, cfg: GeelySelfDrawConfig): String? {
-        if (!GeelyVehicleDetector.isGeelyOrEcarx(app) || !cfg.hasAnyClusterVisual) return null
+        if (!GeelyVehicleDetector.isGeelyOrEcarx(app) || !shouldRenderThemeOnCluster(cfg)) {
+            return if (cfg.dialThemeStyle.isOemNative || cfg.dialThemeStyle.isPureMap) {
+                "IGNORED(oem-standby)"
+            } else {
+                null
+            }
+        }
 
         val currentWin = persistentThemeWindow
         val windowValid = currentWin != null && currentWin.attached &&
@@ -1066,7 +1236,7 @@ internal object GeelyClusterEnhancer {
             GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
             ensureHostNightObserver()
             ensureVehicleDayNightObserver(app)
-            ensureVehicleMediaObserver(app)
+            if (cfg.dialThemeStyle.usesDialChrome) ensureVehicleMediaObserver(app)
             syncPersistentThemeWindow(app, requestFullScreen = true)
             return if (isPersistentThemeActive()) "RECALL(window-attach)" else "RECALL(window-unavailable)"
         }
@@ -1086,9 +1256,10 @@ internal object GeelyClusterEnhancer {
     }
 
     private fun syncClusterWheelKeyActive(context: Context, allowRecallStandby: Boolean = true) {
+        val cfg = GeelyClusterPrefs.load(context)
         val keepListeningForRecall = allowRecallStandby &&
             GeelyVehicleDetector.isGeelyOrEcarx(context) &&
-            GeelyClusterPrefs.load(context).let { it.launchThemeOnStart && it.hasAnyClusterVisual }
+            (cfg.hasClusterThemeCapability || cfg.themeSwitchKeyCode > 0)
         val active = isFullScreenPresentationActive || isPersistentThemeActive() || keepListeningForRecall
         EcarxKx11WheelKeys.setClusterActive(context, active)
     }
@@ -1120,10 +1291,12 @@ internal object GeelyClusterEnhancer {
         runOnMain {
             val cfg = GeelyClusterPrefs.load(appCtx)
             val effectiveNight = resolveEffectiveNightMode(cfg, appCtx)
+            val effectiveFullScreen = isFullScreenPresentationActive && !cfg.dialThemeStyle.isOemNative
             syncPersistentThemeWindow(appCtx, requestFullScreen = false)
             activeFakeUltraView?.apply {
                 config = cfg
                 nightMode = effectiveNight
+                visibility = if (cfg.dialThemeStyle.isOemNative || isPersistentThemeActive()) View.GONE else View.VISIBLE
                 invalidate()
             }
             persistentThemeWindow?.view?.apply {
@@ -1134,6 +1307,7 @@ internal object GeelyClusterEnhancer {
             activePresentationSelfDrawView?.apply {
                 config = cfg
                 nightMode = effectiveNight
+                fullScreen = effectiveFullScreen
                 invalidate()
             }
             syncStockClusterViewsVisibility(activePresentationInnerRoot, cfg)
@@ -1141,6 +1315,7 @@ internal object GeelyClusterEnhancer {
             overlayWindow?.view?.apply {
                 config = cfg
                 nightMode = effectiveNight
+                fullScreen = effectiveFullScreen
                 invalidate()
             }
             activePresentationSelfDrawView?.visibility =
@@ -1154,16 +1329,80 @@ internal object GeelyClusterEnhancer {
         appContext: Context,
         requestFullScreen: Boolean,
         keepAliveWhenDisplayPending: Boolean = false,
+        assumeCarPlayActive: Boolean = false,
     ) {
         if (!GeelyVehicleDetector.isGeelyOrEcarx(appContext)) {
             shutdownPersistentTheme(appContext, handBackIfIdle = false)
             return
         }
         val cfg = GeelyClusterPrefs.load(appContext)
-        if (!cfg.launchThemeOnStart || !cfg.hasAnyClusterVisual) {
-            shutdownPersistentTheme(appContext, handBackIfIdle = true)
+        val prevStyle = lastAppliedThemeStyle
+        val styleChanged = prevStyle != null && prevStyle != cfg.dialThemeStyle
+        val shouldRender = shouldRenderThemeOnCluster(cfg, assumeCarPlayActive)
+        val wasRendered = lastRenderedOnCluster
+        val wasAttached = isPersistentThemeActive()
+
+        if (!cfg.hasClusterThemeCapability) {
+            shutdownPersistentTheme(appContext, handBackIfIdle = !isFullScreenPresentationActive)
+            // Even without persistent theme enabled, support live switching between OEM Classic,
+            // Pure Map, and Mecha themes while a CarPlay presentation is active.
+            if (isFullScreenPresentationActive) {
+                if (cfg.dialThemeStyle.isOemNative) {
+                    activeFakeUltraView?.visibility = View.GONE
+                    overlayWindow?.view?.fullScreen = false
+                    activePresentationSelfDrawView?.fullScreen = false
+                    mainHandler.removeCallbacks(callRecoveryTick)
+                    if (wasRendered || styleChanged) {
+                        ensureDimController(appContext).restoreClassicCluster()
+                        if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(false, appContext)
+                    }
+                    lastRenderedOnCluster = false
+                } else {
+                    activeFakeUltraView?.visibility = View.VISIBLE
+                    overlayWindow?.view?.fullScreen = true
+                    activePresentationSelfDrawView?.fullScreen = true
+                    if (!wasRendered || (styleChanged && prevStyle?.isOemNative == true)) {
+                        ensureDimController(appContext).forceReenterFullScreenMap("theme-switch")
+                        if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(true, appContext)
+                        mainHandler.removeCallbacks(callRecoveryTick)
+                        mainHandler.postDelayed(callRecoveryTick, 1000L)
+                    }
+                    lastRenderedOnCluster = true
+                }
+            } else {
+                lastRenderedOnCluster = false
+            }
+            lastAppliedThemeStyle = cfg.dialThemeStyle
             return
         }
+
+        if (!shouldRender) {
+            // Persistent standby mode: OEM Classic or Pure Map waiting for a map source.
+            // Keep foreground service & wheel keys alive while handing the cluster cleanly to OEM Mode 1.
+            bootRetry.cancel()
+            closePersistentThemeWindow()
+            activeFakeUltraView?.visibility = View.GONE
+            if (cfg.dialThemeStyle.isPureMap && !isFullScreenPresentationActive) {
+                ensureNativeMapObserver(appContext)
+                stopVehicleMediaObserver()
+            } else {
+                stopNativeMapObserver()
+                stopVehicleMediaObserver()
+            }
+            overlayWindow?.view?.fullScreen = false
+            activePresentationSelfDrawView?.fullScreen = false
+            mainHandler.removeCallbacks(callRecoveryTick)
+            GeelyClusterKeepAliveService.start(appContext)
+            syncClusterWheelKeyActive(appContext)
+            if (wasAttached || wasRendered || (styleChanged && (cfg.dialThemeStyle.isOemNative || cfg.dialThemeStyle.isPureMap))) {
+                ensureDimController(appContext).restoreClassicCluster()
+                if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(false, appContext)
+            }
+            lastAppliedThemeStyle = cfg.dialThemeStyle
+            lastRenderedOnCluster = false
+            return
+        }
+
         val targetDisplay = GeelyVehicleDetector.findClusterDisplay(appContext)
         if (targetDisplay == null) {
             if (keepAliveWhenDisplayPending) {
@@ -1171,6 +1410,8 @@ internal object GeelyClusterEnhancer {
             } else {
                 shutdownPersistentTheme(appContext, handBackIfIdle = false)
             }
+            lastAppliedThemeStyle = cfg.dialThemeStyle
+            lastRenderedOnCluster = false
             return
         }
         val effectiveNight = resolveEffectiveNightMode(cfg, appContext)
@@ -1180,43 +1421,61 @@ internal object GeelyClusterEnhancer {
         if (currentWindow != null && currentWindow.attached && currentDisplayValid &&
             currentWindow.display.displayId == targetDisplay.displayId
         ) {
-            ensureVehicleMediaObserver(appContext)
-            if (!isFullScreenPresentationActive) {
+            if (cfg.dialThemeStyle.usesDialChrome) {
+                ensureVehicleMediaObserver(appContext)
+            } else {
+                stopVehicleMediaObserver()
+            }
+            if (!isFullScreenPresentationActive && !assumeCarPlayActive) {
                 ensureNativeMapObserver(appContext)
             }
             currentWindow.view.apply {
                 config = cfg
                 nightMode = effectiveNight
-                carPlayConnected = isFullScreenPresentationActive
-                routeActive = isFullScreenPresentationActive && latestGuidance != null
-                this.nativeMapProjected = !isFullScreenPresentationActive && this@GeelyClusterEnhancer.nativeMapProjected
-                if (!isFullScreenPresentationActive) {
+                carPlayConnected = isFullScreenPresentationActive || assumeCarPlayActive
+                routeActive = (isFullScreenPresentationActive || assumeCarPlayActive) && latestGuidance != null
+                this.nativeMapProjected = !isFullScreenPresentationActive && !assumeCarPlayActive && this@GeelyClusterEnhancer.nativeMapProjected
+                if (!isFullScreenPresentationActive && !assumeCarPlayActive && cfg.dialThemeStyle.usesDialChrome) {
                     applyVehicleMedia(lastVehicleMediaSnapshot)
                 }
                 invalidate()
             }
             GeelyClusterKeepAliveService.start(appContext)
             syncClusterWheelKeyActive(appContext)
-            if (requestFullScreen) {
-                ensureDimController(appContext).forceReenterFullScreenMap("theme-launch")
+            if (requestFullScreen || !wasRendered || (styleChanged && prevStyle?.isOemNative == true)) {
+                ensureDimController(appContext).forceReenterFullScreenMap(
+                    if (styleChanged) "theme-switch" else "theme-launch",
+                )
                 if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(true, appContext)
             }
+            if (isFullScreenPresentationActive) {
+                overlayWindow?.view?.fullScreen = true
+                activePresentationSelfDrawView?.fullScreen = true
+                mainHandler.removeCallbacks(callRecoveryTick)
+                mainHandler.postDelayed(callRecoveryTick, 1000L)
+            }
+            lastAppliedThemeStyle = cfg.dialThemeStyle
+            lastRenderedOnCluster = true
             return
         }
         closePersistentThemeWindow()
         val newWindow = GeelyClusterThemeWindow(appContext, targetDisplay, hostLogger)
         if (newWindow.attach()) {
-            ensureVehicleMediaObserver(appContext)
-            if (!isFullScreenPresentationActive) {
+            if (cfg.dialThemeStyle.usesDialChrome) {
+                ensureVehicleMediaObserver(appContext)
+            } else {
+                stopVehicleMediaObserver()
+            }
+            if (!isFullScreenPresentationActive && !assumeCarPlayActive) {
                 ensureNativeMapObserver(appContext)
             }
             newWindow.view.apply {
                 config = cfg
                 nightMode = effectiveNight
-                carPlayConnected = isFullScreenPresentationActive
-                routeActive = isFullScreenPresentationActive && latestGuidance != null
-                this.nativeMapProjected = !isFullScreenPresentationActive && this@GeelyClusterEnhancer.nativeMapProjected
-                if (!isFullScreenPresentationActive) {
+                carPlayConnected = isFullScreenPresentationActive || assumeCarPlayActive
+                routeActive = (isFullScreenPresentationActive || assumeCarPlayActive) && latestGuidance != null
+                this.nativeMapProjected = !isFullScreenPresentationActive && !assumeCarPlayActive && this@GeelyClusterEnhancer.nativeMapProjected
+                if (!isFullScreenPresentationActive && !assumeCarPlayActive && cfg.dialThemeStyle.usesDialChrome) {
                     applyVehicleMedia(lastVehicleMediaSnapshot)
                 }
                 invalidate()
@@ -1233,11 +1492,25 @@ internal object GeelyClusterEnhancer {
             }
             GeelyClusterKeepAliveService.start(appContext)
             ensureDimController(appContext).forceReenterFullScreenMap(
-                if (requestFullScreen) "app-launch" else "theme-enabled",
+                when {
+                    styleChanged -> "theme-switch"
+                    requestFullScreen -> "app-launch"
+                    else -> "theme-enabled"
+                },
             )
             if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(true, appContext)
+            if (isFullScreenPresentationActive) {
+                overlayWindow?.view?.fullScreen = true
+                activePresentationSelfDrawView?.fullScreen = true
+                mainHandler.removeCallbacks(callRecoveryTick)
+                mainHandler.postDelayed(callRecoveryTick, 1000L)
+            }
+            lastAppliedThemeStyle = cfg.dialThemeStyle
+            lastRenderedOnCluster = true
         } else {
             newWindow.close()
+            lastAppliedThemeStyle = cfg.dialThemeStyle
+            lastRenderedOnCluster = false
         }
     }
 
@@ -1248,10 +1521,12 @@ internal object GeelyClusterEnhancer {
     ) {
         bootRetry.cancel()
         val wasAttached = isPersistentThemeActive()
+        lastRenderedOnCluster = false
         stopVehicleMediaObserver()
         stopNativeMapObserver()
         closePersistentThemeWindow()
-        activeFakeUltraView?.visibility = View.VISIBLE
+        val isOem = GeelyClusterPrefs.load(appContext).dialThemeStyle.isOemNative
+        activeFakeUltraView?.visibility = if (isOem) View.GONE else View.VISIBLE
         GeelyClusterKeepAliveService.stop(appContext)
         syncClusterWheelKeyActive(appContext, allowRecallStandby = allowRecallStandby)
         if (wasAttached && handBackIfIdle && !isFullScreenPresentationActive) {
@@ -1331,6 +1606,9 @@ internal object GeelyClusterEnhancer {
         if (searchIndexSink != null) {
             searchIndexSink.add(SETTINGS_CARD_TITLE)
             searchIndexSink.add("机甲仪表主题风格")
+            searchIndexSink.add("纯地图全屏主题")
+            searchIndexSink.add("原车经典仪表主题")
+            searchIndexSink.add("方向盘主题切换快捷键")
             searchIndexSink.add("W-HUD 抬头显示引导")
             searchIndexSink.add("方向盘视图循环切换键")
             searchIndexSink.add("中央专辑滚动歌词")

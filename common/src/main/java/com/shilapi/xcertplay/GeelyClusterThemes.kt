@@ -231,6 +231,7 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         fallbackTime: String,
         fallbackFuel: String,
         overDarkBackdrop: Boolean = false,
+        overBareMap: Boolean = false,
     ): Boolean {
         val useLightPalette = !overDarkBackdrop && style.supportsLightMode && !nightMode
 
@@ -242,12 +243,15 @@ internal class GeelyUltraThemeRenderer(context: Context) {
             textPaint.textSize = 21f
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.color = if (useLightPalette) Color.rgb(18, 24, 34) else Color.argb(232, 232, 238, 246)
+            val applyDayHalo = useLightPalette && overBareMap
             if (!useLightPalette) {
                 textPaint.setShadowLayer(4f, 0f, 1.5f, Color.argb(150, 0, 0, 0))
+            } else if (applyDayHalo) {
+                textPaint.setShadowLayer(4f, 0f, 0f, Color.argb(215, 255, 255, 255))
             }
             val text = ellipsize(parts.joinToString("   ·   "), textPaint, 420f)
             canvas.drawText(text, 960f, 687f, textPaint)
-            if (!useLightPalette) {
+            if (!useLightPalette || applyDayHalo) {
                 textPaint.clearShadowLayer()
             }
             return false
@@ -278,12 +282,15 @@ internal class GeelyUltraThemeRenderer(context: Context) {
         canvas.drawRoundRect(startX + 8f, barBottom - h2, startX + 12.5f, barBottom, 2f, 2f, fillPaint)
         canvas.drawRoundRect(startX + 16f, barBottom - h3, startX + 20.5f, barBottom, 2f, 2f, fillPaint)
 
+        val applyDayHalo = useLightPalette && overBareMap
         if (!useLightPalette) {
             textPaint.setShadowLayer(5f, 0f, 1.5f, Color.argb(175, 0, 0, 0))
+        } else if (applyDayHalo) {
+            textPaint.setShadowLayer(4.5f, 0f, 0f, Color.argb(220, 255, 255, 255))
         }
         textPaint.color = textColor
         canvas.drawText(displayTitle, startX + eqW + gap, baselineY, textPaint)
-        if (!useLightPalette) {
+        if (!useLightPalette || applyDayHalo) {
             textPaint.clearShadowLayer()
         }
 

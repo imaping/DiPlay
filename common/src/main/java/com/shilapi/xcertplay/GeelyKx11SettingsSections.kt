@@ -321,9 +321,9 @@ internal object GeelyKx11SettingsSections {
         }
         parent.addView(siriCard, ui.matchWrap(bottomMargin = ui.dp(14)))
 
-        // Card 2: Cluster primary & telemetry peek keys
+        // Card 2: Cluster theme, primary & telemetry peek keys
         val clusterKeyCard = ui.surfaceCard()
-        clusterKeyCard.addView(ui.sectionTitle("全境仪表视图与车况快捷键"), ui.matchWrap(bottomMargin = ui.dp(10)))
+        clusterKeyCard.addView(ui.sectionTitle("全境仪表主题、视图与车况快捷键"), ui.matchWrap(bottomMargin = ui.dp(10)))
 
         val learningPrimary = GeelyKx11ShellUi.activeClusterLearnTarget() == EcarxKx11WheelKeys.ClusterLearnTarget.PRIMARY
         val primaryBox = ui.subCard()
@@ -372,10 +372,21 @@ internal object GeelyKx11SettingsSections {
             primaryTrigRow.addView(
                 ui.actionButton(trig.second, selected = cfg.centerSwitchTrigger == trig.first, heightDp = 36, textSizeSp = 12.5f) {
                     val adjTel = if (cfg.sharesTelemetryKeyWithPrimary && cfg.telemetrySwitchTrigger == trig.first) {
-                        if (trig.first == GeelyClusterSwitchTrigger.LONG_PRESS) GeelyClusterSwitchTrigger.DOUBLE_CLICK
-                        else GeelyClusterSwitchTrigger.LONG_PRESS
+                        GeelyClusterSwitchTrigger.resolveNonConflicting(cfg.telemetrySwitchTrigger, setOf(trig.first))
                     } else cfg.telemetrySwitchTrigger
-                    GeelyClusterPrefs.save(act, cfg.copy(centerSwitchTrigger = trig.first, telemetrySwitchTrigger = adjTel))
+                    val adjTheme = if (cfg.sharesThemeKeyWithPrimary) {
+                        val used = linkedSetOf(trig.first)
+                        if (cfg.sharesTelemetryKeyWithPrimary) used.add(adjTel)
+                        GeelyClusterSwitchTrigger.resolveNonConflicting(cfg.themeSwitchTrigger, used)
+                    } else cfg.themeSwitchTrigger
+                    GeelyClusterPrefs.save(
+                        act,
+                        cfg.copy(
+                            centerSwitchTrigger = trig.first,
+                            telemetrySwitchTrigger = adjTel,
+                            themeSwitchTrigger = adjTheme,
+                        ),
+                    )
                     GeelyClusterEnhancer.refreshConfig(act)
                     host.requestRender()
                 },
@@ -442,7 +453,104 @@ internal object GeelyKx11SettingsSections {
             GeelyClusterEnhancer.onCenterModeChangedByUser(act, null, cfg.centerMode)
             host.requestRender()
         }
-        clusterKeyCard.addView(telBox)
+        clusterKeyCard.addView(telBox, ui.matchWrap(bottomMargin = ui.dp(10)))
+
+        // Theme switch wheel key subcard
+        val learningTheme = GeelyKx11ShellUi.activeClusterLearnTarget() == EcarxKx11WheelKeys.ClusterLearnTarget.THEME
+        val themeBox = ui.subCard()
+        val themeTop = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val themeInfo = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+        themeInfo.addView(
+            TextView(act).apply {
+                text = "仪表主题切换键（原车 / 纯地图 / 机甲）"
+                setTextColor(ui.colors.primaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+            },
+        )
+        val themeKeyDesc = when {
+            cfg.themeSwitchKeyCode <= 0 -> "未绑定（自由学习方向盘或中控键）"
+            cfg.sharesThemeKeyWithPrimary -> "共用主视图键：${formatGeelyWheelKey(cfg.themeSwitchKeyCode)} · ${cfg.themeSwitchTrigger.shortLabel}"
+            else -> "独立按键：${formatGeelyWheelKey(cfg.themeSwitchKeyCode)} · ${cfg.themeSwitchTrigger.shortLabel}"
+        }
+        themeInfo.addView(
+            TextView(act).apply {
+                text = themeKeyDesc
+                setTextColor(if (cfg.themeSwitchKeyCode > 0) ui.colors.accent else ui.colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setPadding(0, ui.dp(2), 0, 0)
+            },
+        )
+        themeTop.addView(themeInfo, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = ui.dp(8) })
+        themeTop.addView(
+            if (learningTheme) {
+                ui.primaryButton("请按车机键…", heightDp = 38) {
+                    GeelyKx11ShellUi.cancelAllWheelLearning()
+                    host.requestRender()
+                }
+            } else {
+                ui.actionButton(if (cfg.themeSwitchKeyCode > 0) "改绑按键" else "学习按键", selected = cfg.themeSwitchKeyCode > 0, heightDp = 38) {
+                    startClusterLearning(act, EcarxKx11WheelKeys.ClusterLearnTarget.THEME, host)
+                }
+            },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(38)),
+        )
+        if (cfg.themeSwitchKeyCode > 0) {
+            themeTop.addView(
+                ui.actionButton("清除", heightDp = 38) {
+                    GeelyClusterPrefs.save(act, cfg.copy(themeSwitchKeyCode = 0))
+                    GeelyClusterEnhancer.refreshConfig(act)
+                    host.requestRender()
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(38)).apply { marginStart = ui.dp(6) },
+            )
+        }
+        themeBox.addView(themeTop, ui.matchWrap(bottomMargin = ui.dp(8)))
+
+        val themeTrigRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((idx, trig) in listOf(
+            GeelyClusterSwitchTrigger.SINGLE_CLICK to "单击切主题",
+            GeelyClusterSwitchTrigger.LONG_PRESS to "长按切主题",
+            GeelyClusterSwitchTrigger.DOUBLE_CLICK to "双击切主题",
+        ).withIndex()) {
+            themeTrigRow.addView(
+                ui.actionButton(trig.second, selected = cfg.themeSwitchTrigger == trig.first, heightDp = 36, textSizeSp = 12.5f) {
+                    var nextPrimary = cfg.centerSwitchTrigger
+                    var nextTel = cfg.telemetrySwitchTrigger
+                    if (cfg.sharesThemeKeyWithPrimary && nextPrimary == trig.first) {
+                        val used = linkedSetOf(trig.first)
+                        if (cfg.sharesTelemetryKeyWithPrimary) used.add(nextTel)
+                        nextPrimary = GeelyClusterSwitchTrigger.resolveNonConflicting(nextPrimary, used)
+                    }
+                    if (cfg.sharesThemeKeyWithTelemetry && nextTel == trig.first) {
+                        val used = linkedSetOf(trig.first)
+                        if (cfg.sharesThemeKeyWithPrimary) used.add(nextPrimary)
+                        nextTel = GeelyClusterSwitchTrigger.resolveNonConflicting(nextTel, used)
+                    }
+                    GeelyClusterPrefs.save(
+                        act,
+                        cfg.copy(
+                            centerSwitchTrigger = nextPrimary,
+                            telemetrySwitchTrigger = nextTel,
+                            themeSwitchTrigger = trig.first,
+                        ),
+                    )
+                    GeelyClusterEnhancer.refreshConfig(act)
+                    host.requestRender()
+                },
+                LinearLayout.LayoutParams(0, ui.dp(36), 1f).apply { if (idx > 0) marginStart = ui.dp(6) },
+            )
+        }
+        themeBox.addView(themeTrigRow, ui.matchWrap(bottomMargin = ui.dp(6)))
+        val enabledThemeNames = GeelyClusterThemeStyle.entries
+            .filter { it in cfg.themeCycleStyles }
+            .joinToString(" → ") { it.shortLabel }
+        themeBox.addView(
+            ui.hintText("当前循环：$enabledThemeNames（可在「全境仪表与 HUD」中勾选循环主题）"),
+        )
+        clusterKeyCard.addView(themeBox)
         parent.addView(clusterKeyCard, ui.matchWrap(bottomMargin = ui.dp(14)))
 
         // Card 3: Touch Gesture & Car Button
