@@ -162,18 +162,28 @@ internal object GeelyKx11ShellUi {
                 root.addView(buildSettingsShell(host, ui, isWide), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             }
             else -> {
-                val scroll = ScrollView(host.activity).apply {
-                    isFillViewport = true
-                    clipToPadding = false
+                if (isWide) {
+                    val container = LinearLayout(host.activity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(ui.dp(24), ui.dp(18), ui.dp(24), ui.dp(18))
+                    }
+                    buildHomeContent(container, host, ui, isWide = true)
+                    host.bindScrollViews(null, null)
+                    root.addView(container, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+                } else {
+                    val scroll = ScrollView(host.activity).apply {
+                        isFillViewport = true
+                        clipToPadding = false
+                    }
+                    val container = LinearLayout(host.activity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(20))
+                    }
+                    buildHomeContent(container, host, ui, isWide = false)
+                    scroll.addView(container)
+                    host.bindScrollViews(scroll, null)
+                    root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
                 }
-                val container = LinearLayout(host.activity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(ui.dp(if (isWide) 28 else 14), ui.dp(16), ui.dp(if (isWide) 28 else 14), ui.dp(24))
-                }
-                buildHomeContent(container, host, ui, isWide)
-                scroll.addView(container)
-                host.bindScrollViews(scroll, null)
-                root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             }
         }
         return root
@@ -215,7 +225,6 @@ internal object GeelyKx11ShellUi {
             LinearLayout.LayoutParams(ui.dp(34), ui.dp(34)).apply { marginEnd = ui.dp(12) },
         )
 
-        val titleCol = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
         val titleRow = LinearLayout(act).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -223,7 +232,7 @@ internal object GeelyKx11ShellUi {
         val titleText = when (page) {
             "settings" -> "星越L 设置中心"
             "setup" -> "星越L 首次引导"
-            else -> "DiPlay · 星越L 专版"
+            else -> "DiPlay"
         }
         titleRow.addView(
             TextView(act).apply {
@@ -237,7 +246,7 @@ internal object GeelyKx11ShellUi {
         )
         titleRow.addView(
             ui.badge(
-                text = if (EcarxKx11HeadUnit.detected) "KX11 已识别" else "ECARX 车机",
+                text = if (page == "home") "星越L" else if (EcarxKx11HeadUnit.detected) "KX11" else "ECARX",
                 fg = ui.colors.accent,
                 bg = ui.colors.selectedSurface,
             ),
@@ -245,27 +254,23 @@ internal object GeelyKx11ShellUi {
                 marginStart = ui.dp(10)
             },
         )
-        titleCol.addView(titleRow)
+        bar.addView(titleRow, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        if (isWide) {
-            val hasClusterDisplay = GeelyVehicleDetector.findClusterDisplay(act) != null
-            val subtitle = buildString {
-                append(if (EcarxWheelSpeed.present()) "ECARX CAN 轮速在线" else "ECARX 接口就绪")
-                append(" · ")
-                append(if (hasClusterDisplay) "1920×1080 全境仪表副屏已就绪" else "中控宽屏模式")
+        if (isWide && page == "home") {
+            val fps = AirPlayPersistence.loadFps(act)
+            val statusPill = buildString {
+                append("● ")
+                append(if (EcarxKx11HeadUnit.detected) "KX11" else "ECARX")
+                append(" · ${fps} fps")
+                if (EcarxWheelSpeed.present()) append(" · CAN 轮速就绪")
             }
-            titleCol.addView(
-                TextView(act).apply {
-                    text = subtitle
-                    setTextColor(ui.colors.secondaryText)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                    setSingleLine(true)
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, ui.dp(2), 0, 0)
+            bar.addView(
+                ui.badge(statusPill, ui.colors.success, ui.colors.successBg),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = ui.dp(12)
                 },
             )
         }
-        bar.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         // Theme toggle button
         val themeBtn = ImageButton(act).apply {
@@ -315,37 +320,34 @@ internal object GeelyKx11ShellUi {
         val act = host.activity
         val cfg = GeelyClusterPrefs.load(act)
 
-        // Left column: CarPlay connection master card + 4 high-frequency quick tiles
-        val leftCol = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
-        val connCard = ui.surfaceCard(padH = 20, padV = 18)
+        // Left column: Pure flagship CarPlay launchpad (fills full height in widescreen, zero scroll)
+        val connCard = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            background = ui.roundedBox(ui.colors.surface, ui.colors.outline, cornerDp = 22)
+            setPadding(ui.dp(if (isWide) 28 else 20), ui.dp(if (isWide) 24 else 18), ui.dp(if (isWide) 28 else 20), ui.dp(if (isWide) 24 else 18))
+        }
 
-        val topRow = LinearLayout(act).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val cardTitle = TextView(act).apply {
-            text = act.getString(R.string.wireless_carplay)
-            setTextColor(ui.colors.accent)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            letterSpacing = 0.08f
-        }
-        topRow.addView(cardTitle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val fpsBadge = ui.badge(
-            text = "${AirPlayPersistence.loadFps(act)} fps",
-            fg = ui.colors.success,
-            bg = ui.colors.successBg,
+        val cardTitle = ui.badge(
+            text = act.getString(R.string.wireless_carplay),
+            fg = ui.colors.accent,
+            bg = ui.colors.selectedSurface,
         )
-        topRow.addView(fpsBadge)
-        connCard.addView(topRow, ui.matchWrap(bottomMargin = ui.dp(8)))
+        connCard.addView(
+            cardTitle,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = ui.dp(14)
+            },
+        )
 
         val statusView = TextView(act).apply {
             text = act.getString(R.string.ready_when_you_are)
             setTextColor(ui.colors.primaryText)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (isWide) 25f else 22f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (isWide) 32f else 24f)
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            setSingleLine(false)
+            maxLines = 2
         }
-        connCard.addView(statusView, ui.matchWrap(bottomMargin = ui.dp(6)))
+        connCard.addView(statusView, ui.matchWrap(bottomMargin = ui.dp(8)))
 
         val hintText = when (AirPlayPersistence.loadWirelessHotspotMode(act)) {
             WirelessHotspotMode.EXISTING_WIFI -> act.getString(R.string.existing_wifi_hint)
@@ -356,7 +358,8 @@ internal object GeelyKx11ShellUi {
         val connHint = TextView(act).apply {
             text = hintText
             setTextColor(ui.colors.secondaryText)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (isWide) 14.5f else 13.5f)
+            setLineSpacing(ui.dp(3).toFloat(), 1f)
         }
         connCard.addView(connHint, ui.matchWrap(bottomMargin = ui.dp(6)))
 
@@ -365,99 +368,7 @@ internal object GeelyKx11ShellUi {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
             visibility = View.GONE
         }
-        connCard.addView(lastProblem, ui.matchWrap(bottomMargin = ui.dp(12)))
-
-        val connectBtn = ui.primaryButton(act.getString(R.string.connect_phone), heightDp = 56) {
-            if (CarPlayBackgroundSession.hasSession()) host.openProjection()
-            else host.connect(true)
-        }
-        connCard.addView(connectBtn, ui.matchHeight(56, bottomMargin = ui.dp(12)))
-
-        // Secondary action row: USB / Choose iPhone / Setup or Disconnect
-        val subRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        val usbBtn = ui.actionButton("USB 有线连接", heightDp = 46) { host.connect(false) }
-        val phoneBtn = ui.actionButton("切换 iPhone", heightDp = 46) { host.choosePhone() }
-        val disconnectBtn = ui.actionButton(act.getString(R.string.disconnect), heightDp = 46) {
-            host.disconnect()
-        }.apply { visibility = View.GONE }
-        val guideBtn = ui.actionButton("快速引导", heightDp = 46) {
-            host.openSetupGuide(fromSettings = false)
-        }
-
-        subRow.addView(usbBtn, LinearLayout.LayoutParams(0, ui.dp(46), 1f).apply { marginEnd = ui.dp(8) })
-        subRow.addView(phoneBtn, LinearLayout.LayoutParams(0, ui.dp(46), 1f).apply { marginEnd = ui.dp(8) })
-        subRow.addView(guideBtn, LinearLayout.LayoutParams(0, ui.dp(46), 0.9f))
-        connCard.addView(subRow, ui.matchWrap(bottomMargin = ui.dp(10)))
-        connCard.addView(disconnectBtn, ui.matchHeight(46, bottomMargin = ui.dp(12)))
-
-        // 4 Quick toggle tiles tailored for Xingyue L daily driving
-        val tileGrid = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        val locOn = AirPlayPersistence.loadLocationReportingEnabled(act)
-        val quickTiles = listOf(
-            Triple("常驻全境仪表", if (cfg.launchThemeOnStart) "已开启" else "仅 CarPlay", cfg.launchThemeOnStart) to {
-                val updated = cfg.copy(launchThemeOnStart = !cfg.launchThemeOnStart)
-                GeelyClusterPrefs.save(act, updated)
-                GeelyClusterEnhancer.refreshConfig(act)
-                host.requestRender()
-            },
-            Triple("W-HUD 导航", if (cfg.hudEnabled) "已开启" else "已关闭", cfg.hudEnabled) to {
-                val updated = cfg.copy(hudEnabled = !cfg.hudEnabled)
-                GeelyClusterPrefs.save(act, updated)
-                GeelyClusterEnhancer.refreshConfig(act)
-                host.requestRender()
-            },
-            Triple("GPS+CAN 轮速", if (locOn) "融合上报" else "已关闭", locOn) to {
-                host.onLocationReportingChanged(!locOn)
-            },
-            Triple("方向盘语音键", if (cfg.interceptVoiceKeyForSiri) "短按 Siri" else "长按 Siri", cfg.interceptVoiceKeyForSiri) to {
-                val updated = cfg.copy(interceptVoiceKeyForSiri = !cfg.interceptVoiceKeyForSiri)
-                GeelyClusterPrefs.save(act, updated)
-                EcarxKx11WheelKeys.settingsChanged()
-                host.requestRender()
-            },
-        )
-        for ((idx, entry) in quickTiles.withIndex()) {
-            val (meta, onClick) = entry
-            val (label, stateText, active) = meta
-            val tile = LinearLayout(act).apply {
-                orientation = LinearLayout.VERTICAL
-                background = ui.rippleBox(
-                    fill = if (active) ui.colors.selectedSurface else ui.colors.itemSurface,
-                    stroke = if (active) ui.colors.selectedOutline else ui.colors.outline,
-                    cornerDp = 12,
-                )
-                setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10))
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { onClick() }
-            }
-            tile.addView(
-                TextView(act).apply {
-                    text = label
-                    setTextColor(ui.colors.secondaryText)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setSingleLine(true)
-                    ellipsize = TextUtils.TruncateAt.END
-                },
-            )
-            tile.addView(
-                TextView(act).apply {
-                    text = (if (active) "● " else "○ ") + stateText
-                    setTextColor(if (active) ui.colors.accent else ui.colors.secondaryText)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                    typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-                    setSingleLine(true)
-                    setPadding(0, ui.dp(4), 0, 0)
-                },
-            )
-            tileGrid.addView(
-                tile,
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    if (idx > 0) marginStart = ui.dp(8)
-                },
-            )
-        }
-        connCard.addView(tileGrid)
+        connCard.addView(lastProblem, ui.matchWrap(bottomMargin = ui.dp(6)))
 
         host.setupError?.let { err ->
             connCard.addView(
@@ -465,137 +376,133 @@ internal object GeelyKx11ShellUi {
                     text = err
                     setTextColor(ui.colors.warning)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                    setPadding(0, ui.dp(10), 0, 0)
+                    setPadding(0, ui.dp(4), 0, 0)
                 },
             )
         }
-        leftCol.addView(connCard, ui.matchWrap())
 
-        // Right column: 星越L 全境仪表实时缩略舱 + 设置中心与车况入口
+        // Flexible spacer pushes the action buttons cleanly to the bottom edge to align with the right column.
+        if (isWide) {
+            connCard.addView(View(act), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        } else {
+            connCard.addView(View(act), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(18)))
+        }
+
+        val connectBtn = ui.primaryButton(act.getString(R.string.connect_phone), heightDp = if (isWide) 62 else 54) {
+            if (CarPlayBackgroundSession.hasSession()) host.openProjection()
+            else host.connect(true)
+        }.apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (isWide) 17f else 15.5f)
+            background = ui.rippleBox(ui.colors.accent, Color.TRANSPARENT, 16)
+        }
+        connCard.addView(connectBtn, ui.matchHeight(if (isWide) 62 else 54, bottomMargin = ui.dp(12)))
+
+        val subRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+        val phoneBtn = ui.actionButton("切换 iPhone", heightDp = 46) { host.choosePhone() }
+        val disconnectBtn = ui.actionButton(act.getString(R.string.disconnect), heightDp = 46) {
+            host.disconnect()
+        }.apply { visibility = View.GONE }
+        val guideBtn = ui.actionButton("首次连接引导", heightDp = 46) {
+            host.openSetupGuide(fromSettings = false)
+        }
+        subRow.addView(phoneBtn, LinearLayout.LayoutParams(0, ui.dp(46), 1f))
+        subRow.addView(disconnectBtn, LinearLayout.LayoutParams(0, ui.dp(46), 1f).apply { marginStart = ui.dp(10) })
+        subRow.addView(guideBtn, LinearLayout.LayoutParams(0, ui.dp(46), 1f).apply { marginStart = ui.dp(10) })
+        connCard.addView(subRow, ui.matchWrap())
+
+        // Right column: 3 equal-height cockpit cards (USB / 全境仪表与车况 / 星越L 设置中心)
         val rightCol = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
-        val clusterCard = ui.surfaceCard(padH = 16, padV = 14)
 
-        val clusterHeader = LinearLayout(act).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val clusterTitleCol = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
-        clusterTitleCol.addView(
-            TextView(act).apply {
-                text = "星越L 全境仪表"
-                setTextColor(ui.colors.accent)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            },
+        val usbCard = buildHomeFeatureCard(
+            act = act,
+            ui = ui,
+            iconRes = R.drawable.ic_dp_connection,
+            iconHighlighted = false,
+            title = "USB 有线连接",
+            badgeText = null,
+            subtitle = "将 iPhone 插入中控 USB 数据口即插即连",
+            trailingText = "→",
+            trailingAccent = false,
+            highlightedBorder = false,
+            extraActionText = null,
+            onExtraAction = null,
+            onClick = { host.connect(false) },
         )
-        val homeClusterSub = when {
-            cfg.dialThemeStyle.isOemNative -> "主题：${cfg.dialThemeStyle.shortLabel} · 保留 W-HUD 与经典导航卡"
-            cfg.dialThemeStyle.isPureMap -> "主题：${cfg.dialThemeStyle.shortLabel} · 下方保留音乐 · 无图回落原车"
-            else -> "主题：${cfg.dialThemeStyle.shortLabel} · 视图：${cfg.centerMode.shortLabel}"
-        }
-        clusterTitleCol.addView(
-            TextView(act).apply {
-                text = homeClusterSub
-                setTextColor(ui.colors.secondaryText)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setSingleLine(true)
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, ui.dp(2), 0, 0)
-            },
-        )
-        clusterHeader.addView(clusterTitleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        clusterHeader.addView(
-            ui.actionButton("调教仪表 →", heightDp = 36) {
-                host.openSettings(GeelyKx11SettingsCategory.CLUSTER)
-            },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)),
-        )
-        clusterCard.addView(clusterHeader, ui.matchWrap(bottomMargin = ui.dp(10)))
 
-        // Live composite cluster thumbnail reusing GeelyCompositePreviewView
-        val preview = GeelyCompositePreviewView(act).apply {
-            config = cfg
-            previewRouteActive = true
+        val clusterSubtitle = when {
+            cfg.dialThemeStyle.isOemNative -> "保留原车仪表 · 仅显示 W-HUD 与经典导航卡"
+            cfg.dialThemeStyle.isPureMap -> "纯净导航地图 · 底部保留音乐 · 无图回落原车"
+            else -> "双圆盘主题 · W-HUD · 行程与四轮胎压"
         }
-        clusterCard.addView(preview, ui.matchWrap(bottomMargin = ui.dp(10)))
-
-        // Quick center-view mode pills (2 neat rows)
-        val allModes = GeelyClusterCenterMode.entries
-        val rows = listOf(allModes.take(4), allModes.drop(4))
-        for ((rIdx, rowModes) in rows.withIndex()) {
-            val pillRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-            for ((cIdx, mode) in rowModes.withIndex()) {
-                val active = cfg.centerMode == mode
-                val btn = ui.actionButton(mode.shortLabel, selected = active, heightDp = 34, textSizeSp = 12f) {
-                    val prev = cfg.centerMode
-                    val updated = cfg.copy(centerMode = mode)
-                    GeelyClusterPrefs.save(act, updated)
+        val clusterCard = buildHomeFeatureCard(
+            act = act,
+            ui = ui,
+            iconRes = R.drawable.ic_dp_dashboard,
+            iconHighlighted = true,
+            title = "全境仪表与车况",
+            badgeText = cfg.dialThemeStyle.shortLabel,
+            subtitle = clusterSubtitle,
+            trailingText = "→",
+            trailingAccent = true,
+            highlightedBorder = false,
+            extraActionText = "车况",
+            onExtraAction = {
+                GeelyVehicleStatusDialog.show(act) { chosenMode ->
+                    val cur = GeelyClusterPrefs.load(act)
+                    val prev = cur.centerMode
+                    GeelyClusterPrefs.save(act, cur.copy(centerMode = chosenMode))
                     GeelyClusterEnhancer.refreshConfig(act)
-                    GeelyClusterEnhancer.onCenterModeChangedByUser(act, prev, mode)
+                    GeelyClusterEnhancer.onCenterModeChangedByUser(act, prev, chosenMode)
                     host.requestRender()
                 }
-                pillRow.addView(
-                    btn,
-                    LinearLayout.LayoutParams(0, ui.dp(34), 1f).apply {
-                        if (cIdx > 0) marginStart = ui.dp(6)
-                    },
-                )
-            }
-            clusterCard.addView(
-                pillRow,
-                ui.matchWrap(bottomMargin = if (rIdx == 0) ui.dp(6) else 0),
-            )
-        }
-        rightCol.addView(clusterCard, ui.matchWrap(bottomMargin = ui.dp(12)))
+            },
+            onClick = { host.openSettings(GeelyKx11SettingsCategory.CLUSTER) },
+        )
 
-        // Bottom 2 navigation cards: Settings Center + Telemetry Overview
-        val navRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        val settingsEntry = buildEntryCard(
+        val updateRelease = host.availableUpdate
+        val settingsCard = buildHomeFeatureCard(
             act = act,
             ui = ui,
+            iconRes = R.drawable.ic_dp_controls,
+            iconHighlighted = false,
             title = "星越L 设置中心",
-            subtitle = "6 大精简分类",
-            highlighted = true,
-        ) { host.openSettings(selectedCategory) }
-        val telemetryEntry = buildEntryCard(
-            act = act,
-            ui = ui,
-            title = "车况与胎压总览",
-            subtitle = "CAN / TPMS 实时读数",
-            highlighted = false,
-        ) {
-            GeelyVehicleStatusDialog.show(act) { chosenMode ->
-                val cur = GeelyClusterPrefs.load(act)
-                val prev = cur.centerMode
-                GeelyClusterPrefs.save(act, cur.copy(centerMode = chosenMode))
-                GeelyClusterEnhancer.refreshConfig(act)
-                GeelyClusterEnhancer.onCenterModeChangedByUser(act, prev, chosenMode)
-                host.requestRender()
+            badgeText = updateRelease?.let { "有新版本 ${it.tagName}" },
+            subtitle = "连接 · 方向盘按键 · 显示 · 音频定位 · R2 诊断",
+            trailingText = "v${host.versionName} →",
+            trailingAccent = updateRelease != null,
+            highlightedBorder = true,
+            extraActionText = null,
+            onExtraAction = null,
+            onClick = {
+                if (updateRelease != null) host.openAvailableUpdate(updateRelease)
+                else host.openSettings(selectedCategory)
+            },
+        )
+
+        val cardLp = { bottomGapDp: Int ->
+            if (isWide) {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+                    bottomMargin = ui.dp(bottomGapDp)
+                }
+            } else {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = ui.dp(bottomGapDp)
+                }
             }
         }
-        navRow.addView(settingsEntry, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = ui.dp(10) })
-        navRow.addView(telemetryEntry, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        rightCol.addView(navRow, ui.matchWrap())
-
-        host.availableUpdate?.let { release ->
-            val updateBtn = ui.actionButton(
-                text = "发现新版本 ${release.tagName} · 点击查看更新",
-                selected = true,
-                heightDp = 42,
-            ) { host.openAvailableUpdate(release) }
-            rightCol.addView(updateBtn, ui.matchHeight(42, topMargin = ui.dp(10)))
-        }
+        rightCol.addView(usbCard, cardLp(14))
+        rightCol.addView(clusterCard, cardLp(14))
+        rightCol.addView(settingsCard, cardLp(0))
 
         if (isWide) {
             val split = LinearLayout(act).apply {
                 orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.TOP
             }
-            split.addView(leftCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.32f).apply { marginEnd = ui.dp(18) })
-            split.addView(rightCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            parent.addView(split)
+            split.addView(connCard, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.32f).apply { marginEnd = ui.dp(18) })
+            split.addView(rightCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            parent.addView(split, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         } else {
-            parent.addView(leftCol, ui.matchWrap(bottomMargin = ui.dp(14)))
+            parent.addView(connCard, ui.matchWrap(bottomMargin = ui.dp(14)))
             parent.addView(rightCol, ui.matchWrap())
         }
 
@@ -610,12 +517,19 @@ internal object GeelyKx11ShellUi {
         )
     }
 
-    private fun buildEntryCard(
+    private fun buildHomeFeatureCard(
         act: Activity,
         ui: GeelyKx11UiKit,
+        iconRes: Int,
+        iconHighlighted: Boolean,
         title: String,
+        badgeText: String?,
         subtitle: String,
-        highlighted: Boolean,
+        trailingText: String,
+        trailingAccent: Boolean,
+        highlightedBorder: Boolean,
+        extraActionText: String?,
+        onExtraAction: (() -> Unit)?,
         onClick: () -> Unit,
     ): View {
         val card = LinearLayout(act).apply {
@@ -623,40 +537,83 @@ internal object GeelyKx11ShellUi {
             gravity = Gravity.CENTER_VERTICAL
             background = ui.rippleBox(
                 fill = ui.colors.surface,
-                stroke = if (highlighted) ui.colors.selectedOutline else ui.colors.outline,
-                cornerDp = 16,
+                stroke = if (highlightedBorder) ui.colors.selectedOutline else ui.colors.outline,
+                cornerDp = 20,
             )
-            setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(14))
+            setPadding(ui.dp(18), ui.dp(14), ui.dp(18), ui.dp(14))
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
         }
+
+        val iconBox = LinearLayout(act).apply {
+            gravity = Gravity.CENTER
+            background = ui.roundedBox(
+                fill = if (iconHighlighted) ui.colors.selectedSurface else ui.colors.itemSurface,
+                stroke = Color.TRANSPARENT,
+                cornerDp = 14,
+            )
+        }
+        iconBox.addView(
+            ImageView(act).apply {
+                setImageResource(iconRes)
+                imageTintList = ColorStateList.valueOf(if (iconHighlighted) ui.colors.accent else ui.colors.primaryText)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            LinearLayout.LayoutParams(ui.dp(24), ui.dp(24)),
+        )
+        card.addView(iconBox, LinearLayout.LayoutParams(ui.dp(46), ui.dp(46)).apply { marginEnd = ui.dp(14) })
+
         val textCol = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
-        textCol.addView(
+        val titleRow = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        titleRow.addView(
             TextView(act).apply {
                 text = title
                 setTextColor(ui.colors.primaryText)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16.5f)
                 typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
                 setSingleLine(true)
+                ellipsize = TextUtils.TruncateAt.END
             },
         )
+        if (!badgeText.isNullOrBlank()) {
+            titleRow.addView(
+                ui.badge(badgeText, ui.colors.accent, ui.colors.selectedSurface),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginStart = ui.dp(8)
+                },
+            )
+        }
+        textCol.addView(titleRow)
         textCol.addView(
             TextView(act).apply {
                 text = subtitle
                 setTextColor(ui.colors.secondaryText)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
                 setSingleLine(true)
-                setPadding(0, ui.dp(2), 0, 0)
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, ui.dp(4), 0, 0)
             },
         )
-        card.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = ui.dp(10) })
+
+        if (!extraActionText.isNullOrBlank() && onExtraAction != null) {
+            card.addView(
+                ui.actionButton(extraActionText, heightDp = 34, textSizeSp = 12.5f, onClick = onExtraAction),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34)).apply { marginEnd = ui.dp(10) },
+            )
+        }
+
         card.addView(
             TextView(act).apply {
-                text = "→"
-                setTextColor(if (highlighted) ui.colors.accent else ui.colors.secondaryText)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                typeface = Typeface.DEFAULT_BOLD
+                text = trailingText
+                setTextColor(if (trailingAccent) ui.colors.accent else ui.colors.secondaryText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+                setSingleLine(true)
             },
         )
         return card
