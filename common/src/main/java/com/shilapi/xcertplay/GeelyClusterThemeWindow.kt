@@ -146,7 +146,7 @@ class GeelyClusterKeepAliveService : Service() {
 
         val notification = builder
             .setSmallIcon(R.drawable.ic_diplay_notification)
-            .setContentTitle("DiPlay 仪表主题运行中")
+            .setContentTitle("XingPlay 仪表主题运行中")
             .setContentText(statusSummary)
             .setContentIntent(openPending)
             .setOngoing(true)

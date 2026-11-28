@@ -66,7 +66,7 @@ internal object GeelyKx11SettingsSections {
 
         ui.addSwitchRow(
             parent = autoCard,
-            title = "打开 DiPlay 时自动连接",
+            title = "打开 XingPlay 时自动连接",
             subtitle = "进入软件后立即按默认方式拉起 CarPlay 连接",
             checked = DiPlayPreferences.autoConnect(act),
         ) { enabled ->
@@ -689,7 +689,7 @@ internal object GeelyKx11SettingsSections {
 
         ui.addSegmentedChoice(
             parent = lookCard,
-            title = "DiPlay 应用界面主题",
+            title = "XingPlay 应用界面主题",
             subtitle = "选择「自动」将跟随原车大灯与 ECARX 昼夜状态切换",
             options = listOf(
                 AppAppearance.AUTO to "自动跟随",
@@ -1149,7 +1149,7 @@ internal object GeelyKx11SettingsSections {
         aboutCard.addView(ui.sectionTitle("备份、更新与语言"), ui.matchWrap(bottomMargin = ui.dp(10)))
         aboutCard.addView(
             TextView(act).apply {
-                text = "DiPlay · 星越L（KX11）专版 v${host.versionName}"
+                text = "XingPlay · 星越L（KX11）专版 v${host.versionName}"
                 setTextColor(ui.colors.primaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
             },
@@ -1193,7 +1193,7 @@ internal object GeelyKx11SettingsSections {
         val legacyInfo = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
         legacyInfo.addView(
             TextView(act).apply {
-                text = "打开 DiPlay 原生完整设置（高级排查兜底）"
+                text = "打开上游完整设置（高级排查兜底）"
                 setTextColor(ui.colors.primaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             },

@@ -232,7 +232,7 @@ internal object GeelyKx11ShellUi {
         val titleText = when (page) {
             "settings" -> "星越L 设置中心"
             "setup" -> "星越L 首次引导"
-            else -> "DiPlay"
+            else -> "XingPlay"
         }
         titleRow.addView(
             TextView(act).apply {

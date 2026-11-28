@@ -92,7 +92,7 @@ internal object GeelyKx11SetupFlow {
         val act = ui.activity
         card.addView(
             TextView(act).apply {
-                text = "欢迎使用 DiPlay · 吉利星越L 专版"
+                text = "欢迎使用 XingPlay · 吉利星越L 专版"
                 setTextColor(ui.colors.primaryText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             },
