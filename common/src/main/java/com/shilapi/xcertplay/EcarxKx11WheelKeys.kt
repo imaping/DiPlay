@@ -39,6 +39,7 @@ internal object EcarxKx11WheelKeys {
     private const val CLUSTER_DOUBLE_CLICK_INTERVAL_MS = 600L
     private const val SINGLE_VS_DOUBLE_SPLIT_MS = 380L
     private const val KEY_DUAL_TRACK_PRESET_V1 = "kx11_dual_track_wheel_preset_v1"
+    private const val KEY_THEME_WHEEL_PRESET_V1 = "kx11_theme_wheel_preset_v1"
 
     internal const val DEVICE_NAME = "geely-inputservice"
 
@@ -224,50 +225,80 @@ internal object EcarxKx11WheelKeys {
      * Applies the out-of-the-box recommended KX11 wheel-key preset once per installation/upgrade:
      * - Voice key (`200231`) -> Siri with CarPlay short-press intercept enabled (when Siri was unset
      *   or previously bound to WeChat `200400`)
-     * - WeChat key (`200400`) -> single click cycles Map / Album; long press peeks telemetry pages
+     * - WeChat key (`200400`) -> single click cycles Map / Album; double click cycles cluster theme
+     *   (`原车经典 / 纯地图全屏 / 机甲光翼`); long press peeks telemetry pages
      *   (`本次行程 / 胎压胎温 / 综合车况`) with 5 s auto-close.
      *
-     * Runs once (guarded by [KEY_DUAL_TRACK_PRESET_V1]) so subsequent manual user edits are always
-     * preserved. No-op off ECARX KX11 head units.
+     * Runs once (guarded by [KEY_DUAL_TRACK_PRESET_V1] / [KEY_THEME_WHEEL_PRESET_V1]) so subsequent
+     * manual user edits are always preserved. No-op off ECARX KX11 head units.
      */
     fun ensureDefaultPresets(context: Context) {
         if (!EcarxKx11HeadUnit.detected) return
         if (!presetEnsured.compareAndSet(false, true)) return
         val app = context.applicationContext
         val sp = GeelyClusterPrefs.prefs(app)
-        if (sp.getBoolean(KEY_DUAL_TRACK_PRESET_V1, false)) return
 
-        val current = GeelyClusterPrefs.load(app)
-        val primaryCode = if (current.centerSwitchKeyCode > 0) current.centerSwitchKeyCode else KEY_WECHAT
-        GeelyClusterPrefs.save(
-            app,
-            current.copy(
-                centerSwitchKeyCode = primaryCode,
-                centerSwitchTrigger = GeelyClusterSwitchTrigger.SINGLE_CLICK,
-                primaryCycleModes = GeelyClusterCenterMode.DEFAULT_PRIMARY_MODES,
-                telemetrySwitchKeyCode = 0,
-                telemetrySwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
-                telemetryCycleModes = GeelyClusterCenterMode.DEFAULT_TELEMETRY_MODES,
-                navAutoReturnSeconds = GeelySelfDrawConfig.DEFAULT_NAV_AUTO_RETURN_SECONDS,
-                interceptVoiceKeyForSiri = true,
-            ),
-        )
+        if (!sp.getBoolean(KEY_DUAL_TRACK_PRESET_V1, false)) {
+            val current = GeelyClusterPrefs.load(app)
+            val primaryCode = if (current.centerSwitchKeyCode > 0) current.centerSwitchKeyCode else KEY_WECHAT
+            GeelyClusterPrefs.save(
+                app,
+                current.copy(
+                    centerSwitchKeyCode = primaryCode,
+                    centerSwitchTrigger = GeelyClusterSwitchTrigger.SINGLE_CLICK,
+                    primaryCycleModes = GeelyClusterCenterMode.DEFAULT_PRIMARY_MODES,
+                    telemetrySwitchKeyCode = 0,
+                    telemetrySwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
+                    telemetryCycleModes = GeelyClusterCenterMode.DEFAULT_TELEMETRY_MODES,
+                    themeSwitchKeyCode = primaryCode,
+                    themeSwitchTrigger = GeelyClusterSwitchTrigger.DOUBLE_CLICK,
+                    themeCycleStyles = GeelyClusterThemeStyle.DEFAULT_CYCLE_STYLES,
+                    navAutoReturnSeconds = GeelySelfDrawConfig.DEFAULT_NAV_AUTO_RETURN_SECONDS,
+                    interceptVoiceKeyForSiri = true,
+                ),
+            )
 
-        val currentSiriKey = WheelZoomSettings.key(app, WheelZoomSettings.Role.SIRI)
-        val siriUnsetOrWeChat = !WheelZoomSettings.siriKey(app) ||
-            currentSiriKey == null ||
-            (isGeelyInputKey(currentSiriKey) && currentSiriKey.code == KEY_WECHAT)
-        if (siriUnsetOrWeChat) {
-            WheelZoomSettings.setSiriKey(app, true)
-            WheelZoomSettings.setSiriDoublePress(app, false)
-            WheelZoomSettings.assign(app, WheelZoomSettings.Role.SIRI, toWheelKey(KEY_VOICE_ASSIST))
+            val currentSiriKey = WheelZoomSettings.key(app, WheelZoomSettings.Role.SIRI)
+            val siriUnsetOrWeChat = !WheelZoomSettings.siriKey(app) ||
+                currentSiriKey == null ||
+                (isGeelyInputKey(currentSiriKey) && currentSiriKey.code == KEY_WECHAT)
+            if (siriUnsetOrWeChat) {
+                WheelZoomSettings.setSiriKey(app, true)
+                WheelZoomSettings.setSiriDoublePress(app, false)
+                WheelZoomSettings.assign(app, WheelZoomSettings.Role.SIRI, toWheelKey(KEY_VOICE_ASSIST))
+            }
+
+            sp.edit()
+                .putBoolean(KEY_DUAL_TRACK_PRESET_V1, true)
+                .putBoolean(KEY_THEME_WHEEL_PRESET_V1, true)
+                .apply()
+            note(
+                "KX11 applied default wheel presets " +
+                    "(primary=$primaryCode single, theme=$primaryCode double, telemetry=long 5s, voiceSiri=${siriUnsetOrWeChat}, intercept=true)",
+            )
+            return
         }
 
-        sp.edit().putBoolean(KEY_DUAL_TRACK_PRESET_V1, true).apply()
-        note(
-            "KX11 applied default wheel presets " +
-                "(primary=$primaryCode single, telemetry=long 5s, voiceSiri=${siriUnsetOrWeChat}, intercept=true)",
-        )
+        if (!sp.getBoolean(KEY_THEME_WHEEL_PRESET_V1, false)) {
+            val current = GeelyClusterPrefs.load(app)
+            val themeKey = if (current.themeSwitchKeyCode > 0) current.themeSwitchKeyCode else KEY_WECHAT
+            val used = LinkedHashSet<GeelyClusterSwitchTrigger>()
+            if (current.centerSwitchKeyCode == themeKey) used.add(current.centerSwitchTrigger)
+            if (current.effectiveTelemetrySwitchKeyCode == themeKey) used.add(current.telemetrySwitchTrigger)
+            val themeTrigger = GeelyClusterSwitchTrigger.resolveNonConflicting(
+                GeelyClusterSwitchTrigger.DOUBLE_CLICK,
+                used,
+            )
+            GeelyClusterPrefs.save(
+                app,
+                current.copy(
+                    themeSwitchKeyCode = themeKey,
+                    themeSwitchTrigger = themeTrigger,
+                ),
+            )
+            sp.edit().putBoolean(KEY_THEME_WHEEL_PRESET_V1, true).apply()
+            note("KX11 applied default theme switch preset (theme=$themeKey ${themeTrigger.name.lowercase()})")
+        }
     }
 
     /** Starts listening for assigned KX11 vendor keys while a CarPlay session is active. */

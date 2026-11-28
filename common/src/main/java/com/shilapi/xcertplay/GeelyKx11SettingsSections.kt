@@ -471,7 +471,7 @@ internal object GeelyKx11SettingsSections {
             },
         )
         val themeKeyDesc = when {
-            cfg.themeSwitchKeyCode <= 0 -> "未绑定（自由学习方向盘或中控键）"
+            cfg.themeSwitchKeyCode <= 0 -> "未绑定（可学习按键或共用微信键）"
             cfg.sharesThemeKeyWithPrimary -> "共用主视图键：${formatGeelyWheelKey(cfg.themeSwitchKeyCode)} · ${cfg.themeSwitchTrigger.shortLabel}"
             else -> "独立按键：${formatGeelyWheelKey(cfg.themeSwitchKeyCode)} · ${cfg.themeSwitchTrigger.shortLabel}"
         }
@@ -497,6 +497,28 @@ internal object GeelyKx11SettingsSections {
             },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(38)),
         )
+        if (cfg.centerSwitchKeyCode > 0 && !cfg.sharesThemeKeyWithPrimary) {
+            themeTop.addView(
+                ui.actionButton("共用主视图键", heightDp = 38) {
+                    val used = linkedSetOf(cfg.centerSwitchTrigger)
+                    if (cfg.sharesTelemetryKeyWithPrimary) used.add(cfg.telemetrySwitchTrigger)
+                    val nextTrig = GeelyClusterSwitchTrigger.resolveNonConflicting(
+                        GeelyClusterSwitchTrigger.DOUBLE_CLICK,
+                        used,
+                    )
+                    GeelyClusterPrefs.save(
+                        act,
+                        cfg.copy(
+                            themeSwitchKeyCode = cfg.centerSwitchKeyCode,
+                            themeSwitchTrigger = nextTrig,
+                        ),
+                    )
+                    GeelyClusterEnhancer.refreshConfig(act)
+                    host.requestRender()
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(38)).apply { marginStart = ui.dp(6) },
+            )
+        }
         if (cfg.themeSwitchKeyCode > 0) {
             themeTop.addView(
                 ui.actionButton("清除", heightDp = 38) {

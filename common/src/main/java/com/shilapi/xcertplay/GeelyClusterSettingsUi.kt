@@ -1847,7 +1847,7 @@ internal class GeelyClusterSettingsPanel(
             },
         )
         val themeBindLabel = when {
-            config.themeSwitchKeyCode <= 0 -> "未绑定（由用户自由学习任意车机实体键）"
+            config.themeSwitchKeyCode <= 0 -> "未绑定（可学习车机实体键或点击共用主视图键）"
             config.sharesThemeKeyWithPrimary -> "共用主视图键：${formatGeelyWheelKey(config.themeSwitchKeyCode)}"
             else -> "独立按键：${formatGeelyWheelKey(config.themeSwitchKeyCode)}"
         }
@@ -2022,7 +2022,7 @@ internal class GeelyClusterSettingsPanel(
         }
         themeKeyBox.addView(
             createHintText(
-                "点击「学习按键」即可自动探测并绑定车机方向盘/中控可用实体键（推荐使用自定义键、MODE 键或静音键「长按」避免触发原车短按功能；也可共用微信键）。无地图投屏时，纯地图全屏自动回落原车且按键循环自动跳过。",
+                "默认绑定微信键「双击」切换主题（单击主视图 / 双击切主题 / 长按看车况）；也可点击「学习按键」改绑方向盘自定义键、MODE 键或静音键等实体键。无地图投屏时，纯地图全屏自动回落原车且按键循环自动跳过。",
             ),
         )
         card.addView(themeKeyBox, matchWrap(bottomMargin = dp(10)))

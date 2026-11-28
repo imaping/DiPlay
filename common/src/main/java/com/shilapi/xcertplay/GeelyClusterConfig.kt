@@ -294,7 +294,7 @@ internal data class GeelySelfDrawConfig(
     val telemetrySwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
     val telemetryCycleModes: Set<GeelyClusterCenterMode> = GeelyClusterCenterMode.DEFAULT_TELEMETRY_MODES,
     val themeSwitchKeyCode: Int = 0,
-    val themeSwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.LONG_PRESS,
+    val themeSwitchTrigger: GeelyClusterSwitchTrigger = GeelyClusterSwitchTrigger.DOUBLE_CLICK,
     val themeCycleStyles: Set<GeelyClusterThemeStyle> = GeelyClusterThemeStyle.DEFAULT_CYCLE_STYLES,
     val tireAlertPopupEnabled: Boolean = true,
     val navAutoReturnSeconds: Int = DEFAULT_NAV_AUTO_RETURN_SECONDS,
@@ -410,7 +410,8 @@ internal object GeelyClusterPrefs {
         val defaultPrimaryKey = if (EcarxKx11HeadUnit.detected) EcarxKx11WheelKeys.KEY_WECHAT else 0
         val primaryKeyCode = sp.getInt(KEY_CENTER_SWITCH_KEY_CODE, defaultPrimaryKey)
         val telemetryKeyCode = sp.getInt(KEY_TELEMETRY_SWITCH_KEY_CODE, 0)
-        val themeKeyCode = sp.getInt(KEY_THEME_SWITCH_KEY_CODE, 0)
+        val defaultThemeKey = if (EcarxKx11HeadUnit.detected) EcarxKx11WheelKeys.KEY_WECHAT else 0
+        val themeKeyCode = sp.getInt(KEY_THEME_SWITCH_KEY_CODE, defaultThemeKey)
         val primaryTrigger = GeelyClusterSwitchTrigger.fromName(
             sp.getString(KEY_CENTER_SWITCH_TRIGGER, null),
             defaultValue = GeelyClusterSwitchTrigger.SINGLE_CLICK,
@@ -421,7 +422,7 @@ internal object GeelyClusterPrefs {
         )
         val rawThemeTrigger = GeelyClusterSwitchTrigger.fromName(
             sp.getString(KEY_THEME_SWITCH_TRIGGER, null),
-            defaultValue = GeelyClusterSwitchTrigger.LONG_PRESS,
+            defaultValue = GeelyClusterSwitchTrigger.DOUBLE_CLICK,
         )
         val sharesKey = primaryKeyCode > 0 && (telemetryKeyCode <= 0 || telemetryKeyCode == primaryKeyCode)
         val telemetryTrigger = if (sharesKey) {
