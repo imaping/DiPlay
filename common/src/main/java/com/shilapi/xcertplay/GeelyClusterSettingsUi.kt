@@ -130,7 +130,7 @@ internal data class GeelyClusterUiColors(
     }
 }
 
-private fun formatGeelyWheelKey(code: Int): String {
+internal fun formatGeelyWheelKey(code: Int): String {
     if (code <= 0) return "未绑定"
     val name = when (code) {
         EcarxKx11WheelKeys.KEY_WECHAT -> "微信键"
@@ -961,7 +961,7 @@ internal class GeelyClusterSettingsPanel(
             gravity = Gravity.CENTER_VERTICAL
         }
         val titleCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        titleCol.addView(createCardTitle("机甲仪表主题风格"))
+        titleCol.addView(createCardTitle("全境仪表主题风格"))
         titleCol.addView(
             TextView(activity).apply {
                 text = "${GeelyClusterThemeStyle.entries.size} 套矢量双圆盘风格 · 全部支持昼夜自适应，点击立即生效"
@@ -1172,7 +1172,7 @@ internal class GeelyClusterSettingsPanel(
         // Launch theme on start
         addFlatSwitchRow(
             container = card,
-            title = "开机与启动时自动加载常驻仪表",
+            title = "开机与启动时自动加载常驻全境仪表",
             subtitle = "车机开机后后台静默加载双圆盘与待机时钟，不弹出软件界面（除非同时开启「打开时自动连接 CarPlay」）；纯车机使用或断开 CarPlay 后保持显示。",
             checked = config.launchThemeOnStart,
         ) { checked ->

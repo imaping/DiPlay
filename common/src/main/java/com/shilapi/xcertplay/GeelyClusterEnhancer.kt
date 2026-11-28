@@ -1311,7 +1311,7 @@ internal object GeelyClusterEnhancer {
         overlayWindow = null
     }
 
-    internal const val SETTINGS_CARD_TITLE = "吉利仪表与 HUD"
+    internal const val SETTINGS_CARD_TITLE = "全境仪表与 HUD"
     internal var lastSelectedSettingsTab: Int = 0
     internal var lastStudioTab: Int = 0
     internal var lastPreviewRouteActive: Boolean = true

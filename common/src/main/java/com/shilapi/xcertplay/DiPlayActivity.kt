@@ -236,6 +236,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     private var renderedReadiness: SettingsReadiness? = null
     private var renderedPage: String? = null
     private var renderedSettingsCategory: SettingsCategory? = null
+    private var renderedGeelyCategory: GeelyKx11SettingsCategory? = null
+    private var forceLegacyFullUi = false
     private var pendingScrollY: Int? = null
     private var pendingRailScrollY: Int? = null
     private var pendingRailFocus = false
@@ -418,6 +420,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             ?.let { runCatching { SettingsCategory.valueOf(it) }.getOrNull() }
         setupStep = savedInstanceState?.getInt("setup_step") ?: SetupGuide.STEP_CAR
         setupFromSettings = savedInstanceState?.getBoolean("setup_from_settings") ?: false
+        forceLegacyFullUi = savedInstanceState?.getBoolean("force_legacy_full_ui") ?: false
         page = savedInstanceState?.getString("page") ?: requestedPage(intent)
             ?: if (setupError == null && SetupGuide.shouldOpenOnLaunch(SetupGuide.seen(this),
                     DiPlayPreferences.phoneAddress(this) != null)) "setup" else "home"
@@ -474,6 +477,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         outState.putBoolean("byd_vehicle_advanced", bydVehicleAdvancedExpanded)
         outState.putInt("setup_step", setupStep)
         outState.putBoolean("setup_from_settings", setupFromSettings)
+        outState.putBoolean("force_legacy_full_ui", forceLegacyFullUi)
         super.onSaveInstanceState(outState)
     }
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -687,8 +691,10 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             } ?: preferredFocusTag?.let { FocusSnapshot(it, null, null) }
         } else null
         // A restore still waiting for layout keeps its target: the old page was never laid out.
+        val useGeelyShell = GeelyKx11ShellUi.shouldUse(this, forceLegacyFullUi) &&
+            (page == "home" || page == "settings" || page == "setup")
         val sameDestination = renderedPage == page &&
-            (page != "settings" || renderedSettingsCategory == settingsCategory)
+            (page != "settings" || (if (useGeelyShell) renderedGeelyCategory == GeelyKx11ShellUi.selectedCategory else renderedSettingsCategory == settingsCategory))
         val previousScrollY = (pendingScrollY ?: rootScroll?.scrollY)?.takeIf { sameDestination }
         // The rail is one destination even when its selected category changes.
         val keepRailPosition = renderedPage == "settings" && page == "settings"
@@ -712,39 +718,43 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         bydAdbControls = null
         adbSwitches.clear()
         adbStatus = null
-        val compact = isCompactLayout && when (page) {
-            "settings" -> !SettingsLayoutPreferences.isActive(this)
-            else -> true
-        }
-        val scroll = ScrollView(this).apply { setBackgroundColor(BG); isFillViewport = true; clipToPadding = false }
-        rootScroll = scroll
-        val content = column()
-        scroll.addView(content)
-        val header = if (page == "settings") settingsHeader(compact) else standardHeader(compact)
-        val root: View = if (page == "settings" && isExpandedSettingsLayout) {
-            content.setPadding(0, 0, 0, dp(32))
-            settingsCategoryContent(content)
-            expandedSettingsShell(header, scroll)
+        val root: View = if (useGeelyShell) {
+            GeelyKx11ShellUi.render(page, createGeelyKx11ShellHost())
         } else {
-            if (compact) content.setPadding(dp(12), dp(10), dp(12), dp(12))
-            else content.setPadding(dp(32), dp(24), dp(32), dp(32))
-            content.addView(header)
-            content.addView(space(when {
-                compact && (page == "settings" || page == "home") -> SETTINGS_BLOCK_GAP_DP
-                compact -> 8
-                else -> 24
-            }))
-            if (page == "settings") content.addView(reconnectBar(), LinearLayout.LayoutParams(-1, -2).apply {
-                bottomMargin = dp(SETTINGS_BLOCK_GAP_DP)
-            })
-            when (page) {
-                "connection" -> connectionSetup(content)
-                "setup" -> setupGuide(content)
-                "settings" -> settingsCategoryContent(content)
-                "backup" -> backup(content)
-                else -> home(content)
+            val compact = isCompactLayout && when (page) {
+                "settings" -> !SettingsLayoutPreferences.isActive(this)
+                else -> true
             }
-            scroll
+            val scroll = ScrollView(this).apply { setBackgroundColor(BG); isFillViewport = true; clipToPadding = false }
+            rootScroll = scroll
+            val content = column()
+            scroll.addView(content)
+            val header = if (page == "settings") settingsHeader(compact) else standardHeader(compact)
+            if (page == "settings" && isExpandedSettingsLayout) {
+                content.setPadding(0, 0, 0, dp(32))
+                settingsCategoryContent(content)
+                expandedSettingsShell(header, scroll)
+            } else {
+                if (compact) content.setPadding(dp(12), dp(10), dp(12), dp(12))
+                else content.setPadding(dp(32), dp(24), dp(32), dp(32))
+                content.addView(header)
+                content.addView(space(when {
+                    compact && (page == "settings" || page == "home") -> SETTINGS_BLOCK_GAP_DP
+                    compact -> 8
+                    else -> 24
+                }))
+                if (page == "settings") content.addView(reconnectBar(), LinearLayout.LayoutParams(-1, -2).apply {
+                    bottomMargin = dp(SETTINGS_BLOCK_GAP_DP)
+                })
+                when (page) {
+                    "connection" -> connectionSetup(content)
+                    "setup" -> setupGuide(content)
+                    "settings" -> settingsCategoryContent(content)
+                    "backup" -> backup(content)
+                    else -> home(content)
+                }
+                scroll
+            }
         }
         // Keep the background full screen, but all controls inside the camera and
         // visible system/keyboard bounds. Insets are physical pixels, not scaled dp.
@@ -764,7 +774,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
         renderedPage = page
-        renderedSettingsCategory = settingsCategory.takeIf { page == "settings" }
+        renderedSettingsCategory = settingsCategory.takeIf { page == "settings" && !useGeelyShell }
+        renderedGeelyCategory = GeelyKx11ShellUi.selectedCategory.takeIf { page == "settings" && useGeelyShell }
         refreshStatus()
         focusSnapshot?.let { snapshot ->
             root.doOnLayout {
@@ -782,10 +793,11 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         pendingScrollY = previousScrollY
         // A stopped window still dispatches pre-draw but skips layout, so wait for a real layout;
         // the listener stays on this view and goes away with it.
+        val activeScroll = rootScroll
         previousScrollY?.let { y ->
-            scroll.doOnLayout {
-                if (rootScroll === scroll) {
-                    scroll.scrollTo(0, y)
+            activeScroll?.doOnLayout {
+                if (rootScroll === activeScroll) {
+                    activeScroll.scrollTo(0, y)
                     pendingScrollY = null
                 }
             }
@@ -842,6 +854,9 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 page = "settings"
                 settingsCategory = backupOpenedFrom
             }
+            page == "setup" && GeelyKx11ShellUi.shouldUse(this, forceLegacyFullUi) && GeelyKx11ShellUi.setupStep > 0 -> {
+                GeelyKx11ShellUi.setupStep--
+            }
             page == "setup" && setupStep > SetupGuide.STEP_CAR -> setupStep--
             page == "setup" -> {
                 closeSetupGuide()
@@ -852,8 +867,12 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 settingsCategory = returnCategory
                 connectionSettingsReturnCategory = null
             }
-            page == "settings" && !isExpandedSettingsLayout && settingsCategory != SettingsCategory.OVERVIEW -> {
+            page == "settings" && !isExpandedSettingsLayout && settingsCategory != SettingsCategory.OVERVIEW &&
+                !GeelyKx11ShellUi.shouldUse(this, forceLegacyFullUi) -> {
                 settingsCategory = SettingsCategory.OVERVIEW
+            }
+            page == "settings" && forceLegacyFullUi && GeelyVehicleDetector.isGeelyOrEcarx(this) -> {
+                forceLegacyFullUi = false
             }
             else -> {
                 page = "home"
@@ -1422,6 +1441,111 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     private fun geelySettings(content: LinearLayout) {
         settingsPageTitle(content, getString(R.string.geely_settings_title), getString(R.string.geely_settings_summary))
         GeelyClusterEnhancer.appendSettingsCard(this, content, palette, searchIndexSink) { render() }
+    }
+
+    private fun createGeelyKx11ShellHost(): GeelyKx11ShellHost = object : GeelyKx11ShellHost {
+        override val activity: android.app.Activity get() = this@DiPlayActivity
+        override val palette: DiPlayPalette get() = this@DiPlayActivity.palette
+        override val isNight: Boolean get() = appNight
+        override val setupError: String? get() = this@DiPlayActivity.setupError
+        override val versionName: String get() = version()
+        override val availableUpdate: UpdateRelease? get() = this@DiPlayActivity.availableUpdate
+        override val exportInProgress: Boolean get() = this@DiPlayActivity.exportInProgress
+
+        override fun connect(wireless: Boolean) = this@DiPlayActivity.connect(wireless)
+        override fun disconnect() {
+            disconnectButton?.isEnabled = false
+            CarPlayBackgroundSession.stop { runOnUiThread { refreshStatus() } }
+        }
+        override fun openProjection() = this@DiPlayActivity.openProjection()
+        override fun choosePhone() = this@DiPlayActivity.choosePhone()
+        override fun openConnectionSetup() = openConnectionSetupFromSettings()
+        override fun openBackup(forDiagnostics: Boolean) =
+            this@DiPlayActivity.openBackup(if (forDiagnostics) SettingsCategory.DIAGNOSTICS else SettingsCategory.ABOUT)
+        override fun openSettings(category: GeelyKx11SettingsCategory?) {
+            category?.let { GeelyKx11ShellUi.selectedCategory = it }
+            page = "settings"
+            render()
+        }
+        override fun openSetupGuide(fromSettings: Boolean) {
+            GeelyKx11ShellUi.setupStep = 0
+            this@DiPlayActivity.openSetupGuide(fromSettings)
+        }
+        override fun closeSetupGuide(connectNow: Boolean) = this@DiPlayActivity.closeSetupGuide(connectNow)
+        override fun openLegacyFullSettings() {
+            forceLegacyFullUi = true
+            page = "settings"
+            settingsCategory = SettingsCategory.OVERVIEW
+            render()
+        }
+        override fun navigateBack() = this@DiPlayActivity.navigateBack()
+        override fun requestRender() = render()
+
+        override fun toggleAppearance() {
+            AirPlayPersistence.saveAppAppearance(
+                this@DiPlayActivity,
+                if (appNight) AppAppearance.LIGHT else AppAppearance.DARK,
+            )
+            rememberLaunchAppearance()
+            requestAppearanceRender(focusAppearanceButton = false)
+        }
+        override fun applyFullscreenMode() = this@DiPlayActivity.applyFullscreenMode()
+        override fun checkForAppearanceChange() {
+            rememberLaunchAppearance()
+            handler.post { this@DiPlayActivity.checkForAppearanceChange() }
+        }
+        override fun onLocationReportingChanged(enabled: Boolean) =
+            this@DiPlayActivity.onLocationReportingChanged(enabled)
+        override fun markReconnectNeeded() = this@DiPlayActivity.markReconnectNeeded()
+        override fun reconnectIfRunning() = this@DiPlayActivity.reconnectIfRunning()
+        override fun openPictureAdjustments() {
+            OwnScreenStart.start(
+                this@DiPlayActivity,
+                CarPlayScreen.intent(this@DiPlayActivity)
+                    .putExtra("picture_controls", true)
+                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            )
+        }
+        override fun openBluetoothSettings() = this@DiPlayActivity.openBluetoothSettings()
+        override fun openAppPermissions() =
+            openSystem(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        override fun promptEnableUsbAutoConfirm() = this@DiPlayActivity.promptEnableUsbAutoConfirm()
+        override fun autoApplyPermissions() = this@DiPlayActivity.autoApplyPermissions()
+        override fun repairBootStart() = this@DiPlayActivity.repairBootStart()
+        override fun saveReportToDownloads() = this@DiPlayActivity.saveReportToDownloads()
+        override fun chooseReportDestination() = this@DiPlayActivity.chooseReportDestination()
+        override fun reportFileName(): String = this@DiPlayActivity.reportFileName()
+        override fun diagnosticReportText(appContext: Context): String =
+            this@DiPlayActivity.diagnosticReportText(appContext)
+        override fun openAvailableUpdate(release: UpdateRelease) =
+            this@DiPlayActivity.openAvailableUpdate(release)
+        override fun createUpdateSectionView(): View = updateRow()
+        override fun createReconnectBarView(): View = reconnectBar()
+        override fun createCarButtonSection(parent: LinearLayout) {
+            carButtonCard = parent
+            carButtonControls(parent)
+        }
+        override fun bindStatusViews(
+            statusView: TextView?,
+            cardTitleView: TextView?,
+            connectionHintView: TextView?,
+            lastProblemView: TextView?,
+            connectBtn: Button?,
+            disconnectBtn: Button?,
+            exportBtn: Button?,
+        ) {
+            status = statusView
+            homeCardTitle = cardTitleView
+            homeConnectionHint = connectionHintView
+            homeLastProblem = lastProblemView
+            connectButton = connectBtn
+            disconnectButton = disconnectBtn
+            exportButton = exportBtn
+        }
+        override fun bindScrollViews(contentScroll: ScrollView?, railScroll: ScrollView?) {
+            rootScroll = contentScroll
+            settingsRailScroll = railScroll
+        }
     }
 
     private fun vehicleSettings(content: LinearLayout) {
@@ -2841,6 +2965,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         updateStage = UpdateStage.AVAILABLE
         page = "settings"
         settingsCategory = SettingsCategory.ABOUT
+        GeelyKx11ShellUi.selectedCategory = GeelyKx11SettingsCategory.DIAGNOSTICS
         render()
     }
 
@@ -4676,6 +4801,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     private fun cancelKeyLearning() {
         WheelKeyService.cancelLearning()
         EcarxKx11WheelKeys.cancelLearning()
+        GeelyKx11ShellUi.cancelAllWheelLearning()
         handler.removeCallbacks(endWindowLearning)
         val cancelled = windowLearning?.cancelled
         windowLearning = null
