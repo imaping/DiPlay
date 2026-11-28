@@ -589,7 +589,7 @@ internal object GeelyClusterEnhancer {
             vehicleDayNightRemoval = null
             carPlayNightSink = null
             closeStandaloneOverlayWindow()
-            shutdownPersistentTheme(app, handBackIfIdle = true)
+            shutdownPersistentTheme(app, handBackIfIdle = true, allowRecallStandby = false)
         }
     }
 
@@ -933,6 +933,7 @@ internal object GeelyClusterEnhancer {
         val app = context.applicationContext
         hostAppContext = app
         val cfg = GeelyClusterPrefs.load(app)
+        ensureClusterThemeVisibleForWheelKey(app, cfg)?.let { return it }
         if (cfg.centerMode.isTelemetryPage) {
             val returned = closeTelemetryPeek(app, cfg, reason = "primary-key")
             if (!isFullScreenPresentationActive) {
@@ -1007,6 +1008,7 @@ internal object GeelyClusterEnhancer {
         val app = context.applicationContext
         hostAppContext = app
         val cfg = GeelyClusterPrefs.load(app)
+        ensureClusterThemeVisibleForWheelKey(app, cfg)?.let { return it }
         val telemetryList = GeelyClusterCenterMode.TELEMETRY_ORDER
             .filter { it in cfg.telemetryCycleModes }
             .ifEmpty { listOf(GeelyClusterCenterMode.TRIP) }
@@ -1039,8 +1041,55 @@ internal object GeelyClusterEnhancer {
     /** Backwards-compatible alias for cycling the primary cluster center display. */
     fun cycleCenterMode(context: Context): String = cyclePrimaryCenterMode(context)
 
-    private fun syncClusterWheelKeyActive(context: Context) {
-        val active = isFullScreenPresentationActive || isPersistentThemeActive()
+    /**
+     * Ensures the cluster theme overlay is attached and the instrument panel is in full-screen
+     * projection mode (`Mode 3`) when the driver presses a cluster view-switch wheel key.
+     *
+     * After an ignition off/on cycle (or manual switch back to classic cluster), the head-unit
+     * Android process stays alive while the cluster MCU resets to classic mode (`Mode 1`) or drops
+     * the display handle. When that is detected, this press recalls/reloads the cluster theme
+     * without advancing the page; subsequent presses switch pages normally.
+     *
+     * @return a diagnostic status string if this press was consumed to recall/load the theme,
+     * or `null` when the theme is already visible and the caller should proceed with page cycling.
+     */
+    private fun ensureClusterThemeVisibleForWheelKey(app: Context, cfg: GeelySelfDrawConfig): String? {
+        if (!GeelyVehicleDetector.isGeelyOrEcarx(app) || !cfg.hasAnyClusterVisual) return null
+
+        val currentWin = persistentThemeWindow
+        val windowValid = currentWin != null && currentWin.attached &&
+            runCatching { currentWin.display.isValid }.getOrDefault(false)
+
+        if (!isFullScreenPresentationActive && !windowValid) {
+            if (!cfg.launchThemeOnStart) return null
+            GeelyClusterProjection.releaseStale(app)
+            GeelyClusterPrefs.prefs(app).registerOnSharedPreferenceChangeListener(prefsListener)
+            ensureHostNightObserver()
+            ensureVehicleDayNightObserver(app)
+            ensureVehicleMediaObserver(app)
+            syncPersistentThemeWindow(app, requestFullScreen = true)
+            return if (isPersistentThemeActive()) "RECALL(window-attach)" else "RECALL(window-unavailable)"
+        }
+
+        val controller = ensureDimController(app)
+        val naviMode = controller.getNaviMode() ?: run {
+            controller.resetCachedHandle()
+            controller.getNaviMode()
+        }
+        if (naviMode != null && naviMode != GeelyDimMenuController.MODE_FULLSCREEN_MAP) {
+            currentFakeUltraView?.invalidate()
+            controller.forceReenterFullScreenMap("wheel-key-recall")
+            if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(true, app)
+            return "RECALL(dim-mode-$naviMode->3)"
+        }
+        return null
+    }
+
+    private fun syncClusterWheelKeyActive(context: Context, allowRecallStandby: Boolean = true) {
+        val keepListeningForRecall = allowRecallStandby &&
+            GeelyVehicleDetector.isGeelyOrEcarx(context) &&
+            GeelyClusterPrefs.load(context).let { it.launchThemeOnStart && it.hasAnyClusterVisual }
+        val active = isFullScreenPresentationActive || isPersistentThemeActive() || keepListeningForRecall
         EcarxKx11WheelKeys.setClusterActive(context, active)
     }
 
@@ -1126,7 +1175,9 @@ internal object GeelyClusterEnhancer {
         }
         val effectiveNight = resolveEffectiveNightMode(cfg, appContext)
         val currentWindow = persistentThemeWindow
-        if (currentWindow != null && currentWindow.attached &&
+        val currentDisplayValid = currentWindow != null &&
+            runCatching { currentWindow.display.isValid }.getOrDefault(true)
+        if (currentWindow != null && currentWindow.attached && currentDisplayValid &&
             currentWindow.display.displayId == targetDisplay.displayId
         ) {
             ensureVehicleMediaObserver(appContext)
@@ -1190,7 +1241,11 @@ internal object GeelyClusterEnhancer {
         }
     }
 
-    private fun shutdownPersistentTheme(appContext: Context, handBackIfIdle: Boolean) {
+    private fun shutdownPersistentTheme(
+        appContext: Context,
+        handBackIfIdle: Boolean,
+        allowRecallStandby: Boolean = true,
+    ) {
         bootRetry.cancel()
         val wasAttached = isPersistentThemeActive()
         stopVehicleMediaObserver()
@@ -1198,7 +1253,7 @@ internal object GeelyClusterEnhancer {
         closePersistentThemeWindow()
         activeFakeUltraView?.visibility = View.VISIBLE
         GeelyClusterKeepAliveService.stop(appContext)
-        syncClusterWheelKeyActive(appContext)
+        syncClusterWheelKeyActive(appContext, allowRecallStandby = allowRecallStandby)
         if (wasAttached && handBackIfIdle && !isFullScreenPresentationActive) {
             activeDimController?.restoreClassicCluster()
             if (GeelyClusterDisplay.supported()) GeelyClusterProjection.set(false, appContext)
