@@ -99,13 +99,39 @@
             android:screenOrientation="fullSensor"
             android:theme="@style/Theme.Xcertplay"
             android:windowSoftInputMode="adjustResize">
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/usb_device_filter" />
+        </activity>
+
+        <!-- Toggleable USB auto-launch entry for Apple devices; disabled via UsbAutoLaunchControl
+             when the driver wants to charge on the head-unit data port without launching CarPlay. -->
+        <activity-alias
+            android:name="com.shilapi.xcertplay.IphoneUsbAttachAlias"
+            android:enabled="true"
+            android:exported="true"
+            android:targetActivity="com.shilapi.xcertplay.CarPlayHostActivity">
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
             <meta-data
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
-                android:resource="@xml/usb_device_filter" />
-        </activity>
+                android:resource="@xml/iphone_usb_device_filter" />
+        </activity-alias>
+
+        <!-- Keeps CH341 MFi dongle hot-plug active even when iPhone USB auto-launch is turned off. -->
+        <activity-alias
+            android:name="com.shilapi.xcertplay.Ch341UsbAttachAlias"
+            android:enabled="true"
+            android:exported="true"
+            android:targetActivity="com.shilapi.xcertplay.CarPlayHostActivity">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/ch341_usb_device_filter" />
+        </activity-alias>
 
         <!-- The same CarPlay screen in DiPlay's own task, declared as it was up to 0.2.11, for launchers that show
              that task in a card or picture-in-picture window (#463). CarPlayScreen chooses between the two. -->

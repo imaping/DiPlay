@@ -396,6 +396,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         // before showing anything, so the cluster is not left on DiPlay's last frame.
         GeelyClusterProjection.releaseStale(applicationContext)
         GeelyClusterEnhancer.onAppLaunched(applicationContext)
+        UsbAutoLaunchControl.syncComponentState(applicationContext)
         PhoneAudioRoute.attach(applicationContext)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= 28) {
@@ -1842,6 +1843,14 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                     AirPlayPersistence.loadWirelessHotspotMode(this) == WirelessHotspotMode.MANUAL },
                 permissions = { listOf(CarHotspotSetup.Permission.BOOT_LAUNCH) }) {
                 AirPlayPersistence.saveAutoStartOnBoot(this, it)
+            }
+            toggle(
+                card,
+                getString(R.string.settings_open_on_iphone_usb_title),
+                getString(R.string.settings_open_on_iphone_usb_subtitle),
+                UsbAutoLaunchControl.isEnabled(this),
+            ) { enabled ->
+                UsbAutoLaunchControl.setEnabled(this, enabled)
             }
             val autoConfirmActive = UsbPermissionSetup.Permission.ACCESSIBILITY.granted(this)
             toggle(

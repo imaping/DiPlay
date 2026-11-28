@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_open_on_iphone_usb_title">Apri al collegamento USB dell’iPhone</string>
+    <string name="settings_open_on_iphone_usb_subtitle">Disattiva per ricaricare dalla porta dati dell’auto senza aprire CarPlay o richieste USB automaticamente. Puoi comunque aprire DiPlay manualmente per connetterti via USB.</string>
+</resources>

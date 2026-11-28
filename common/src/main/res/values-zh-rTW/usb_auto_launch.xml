@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_open_on_iphone_usb_title">插入 iPhone 傳輸線時自動開啟</string>
+    <string name="settings_open_on_iphone_usb_subtitle">關閉後，插入車機資料埠僅充電，不彈出 CarPlay 或 USB 確認視窗；需要時仍可手動開啟 DiPlay 連接有線 CarPlay。</string>
+</resources>
