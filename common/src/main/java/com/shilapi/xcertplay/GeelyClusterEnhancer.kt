@@ -45,7 +45,9 @@ internal object GeelyClusterEnhancer {
     private var vehicleMediaSubscription: (() -> Unit)? = null
     private var lastVehicleMediaSnapshot: GeelyVehicleMediaSnapshot = GeelyVehicleMediaSnapshot()
     private var nativeMapSubscription: (() -> Unit)? = null
+    private var nativeMapObserverRegistering: Boolean = false
     private var nativeMapProjected: Boolean = false
+    private var syncingPersistentThemeWindow: Boolean = false
     private var hostNightObserverRemoval: (() -> Unit)? = null
     private var vehicleDayNightRemoval: (() -> Unit)? = null
     private var carPlayNightSink: ((Boolean) -> Unit)? = null
@@ -315,31 +317,46 @@ internal object GeelyClusterEnhancer {
 
     private fun ensureNativeMapObserver(context: Context) {
         val app = context.applicationContext
-        if (nativeMapSubscription != null) {
-            GeelyNativeClusterMapObserver.refreshNow()
+        if (nativeMapSubscription != null || nativeMapObserverRegistering) {
+            if (nativeMapSubscription != null) {
+                GeelyNativeClusterMapObserver.refreshNow()
+            }
             return
         }
-        nativeMapSubscription = GeelyNativeClusterMapObserver.observe(app, hostLogger) { projected ->
-            nativeMapProjected = projected
-            runOnMain { applyNativeMapState() }
+        nativeMapObserverRegistering = true
+        try {
+            nativeMapSubscription = GeelyNativeClusterMapObserver.observe(app, hostLogger) { projected ->
+                val changed = nativeMapProjected != projected
+                nativeMapProjected = projected
+                runOnMain { applyNativeMapState(stateChanged = changed) }
+            }
+        } finally {
+            nativeMapObserverRegistering = false
         }
     }
 
     private fun stopNativeMapObserver() {
         nativeMapSubscription?.invoke()
         nativeMapSubscription = null
+        nativeMapObserverRegistering = false
         nativeMapProjected = false
         runOnMain { currentFakeUltraView?.nativeMapProjected = false }
     }
 
-    private fun applyNativeMapState() {
+    private fun applyNativeMapState(stateChanged: Boolean = false) {
         val activeNative = !isFullScreenPresentationActive && nativeMapProjected
         currentFakeUltraView?.nativeMapProjected = activeNative
         val app = hostAppContext ?: return
         if (!isFullScreenPresentationActive) {
             val cfg = GeelyClusterPrefs.load(app)
-            if (cfg.dialThemeStyle.isPureMap) {
-                syncPersistentThemeWindow(app, requestFullScreen = activeNative)
+            if (cfg.dialThemeStyle.isPureMap && (stateChanged || (activeNative && !isPersistentThemeActive()))) {
+                mainHandler.post {
+                    val curCfg = GeelyClusterPrefs.load(app)
+                    if (!isFullScreenPresentationActive && curCfg.dialThemeStyle.isPureMap) {
+                        val nowActive = nativeMapProjected
+                        syncPersistentThemeWindow(app, requestFullScreen = nowActive)
+                    }
+                }
             }
         }
     }
@@ -1326,6 +1343,26 @@ internal object GeelyClusterEnhancer {
     }
 
     private fun syncPersistentThemeWindow(
+        appContext: Context,
+        requestFullScreen: Boolean,
+        keepAliveWhenDisplayPending: Boolean = false,
+        assumeCarPlayActive: Boolean = false,
+    ) {
+        if (syncingPersistentThemeWindow) return
+        syncingPersistentThemeWindow = true
+        try {
+            syncPersistentThemeWindowInternal(
+                appContext = appContext,
+                requestFullScreen = requestFullScreen,
+                keepAliveWhenDisplayPending = keepAliveWhenDisplayPending,
+                assumeCarPlayActive = assumeCarPlayActive,
+            )
+        } finally {
+            syncingPersistentThemeWindow = false
+        }
+    }
+
+    private fun syncPersistentThemeWindowInternal(
         appContext: Context,
         requestFullScreen: Boolean,
         keepAliveWhenDisplayPending: Boolean = false,

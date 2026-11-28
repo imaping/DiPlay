@@ -96,7 +96,14 @@ internal object GeelyNativeClusterMapObserver {
             ensurePollingLocked()
             projected
         }
-        runOnMain { listener(initial) }
+        // Always post initial delivery asynchronously so callers receive and store the
+        // unsubscribe handle before the listener runs (prevents synchronous re-entry loops).
+        mainHandler.post {
+            val stillRegistered = synchronized(lock) { token in observers }
+            if (stillRegistered) {
+                runCatching { listener(initial) }
+            }
+        }
         return {
             synchronized(lock) {
                 observers.remove(token)
